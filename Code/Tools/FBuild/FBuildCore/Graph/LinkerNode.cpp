@@ -36,12 +36,14 @@ LinkerNode::LinkerNode( const AString & linkerOutputName,
                          const AString & linkerArgs,
                          uint32_t flags,
                          const Dependencies & assemblyResources,
+						 const Dependencies & preBuildDependencies,
                          const AString & importLibName,
                          Node * linkerStampExe,
                          const AString & linkerStampExeArgs )
 : FileNode( linkerOutputName, Node::FLAG_NONE )
 , m_Flags( flags )
 , m_AssemblyResources( assemblyResources )
+, m_PreBuildDependencies( preBuildDependencies )
 , m_OtherLibraries( otherLibraries )
 , m_ImportLibName( importLibName )
 , m_LinkerStampExe( linkerStampExe )
@@ -50,7 +52,7 @@ LinkerNode::LinkerNode( const AString & linkerOutputName,
     m_LastBuildTimeMs = 20000;
 
     // presize vector
-    size_t numStaticDeps = inputLibraries.GetSize() + assemblyResources.GetSize() + otherLibraries.GetSize();
+    size_t numStaticDeps = inputLibraries.GetSize() + assemblyResources.GetSize() + preBuildDependencies.GetSize() + otherLibraries.GetSize();
     if ( linkerStampExe )
     {
         numStaticDeps++;
@@ -60,6 +62,7 @@ LinkerNode::LinkerNode( const AString & linkerOutputName,
     // depend on everything we'll link together
     m_StaticDependencies.Append( inputLibraries );
     m_StaticDependencies.Append( assemblyResources );
+	m_StaticDependencies.Append(preBuildDependencies);
     m_StaticDependencies.Append( otherLibraries );
 
     // manage optional LinkerStampExe

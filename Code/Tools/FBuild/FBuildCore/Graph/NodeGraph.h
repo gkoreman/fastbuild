@@ -127,6 +127,7 @@ public:
                                    const AString & linkerArgs,
                                    uint32_t flags,
                                    const Dependencies & assemblyResources,
+								   const Dependencies & preBuildDependencies,
                                    const AString & importLibName,
                                    Node * linkerStampExe,
                                    const AString & linkerStampExeArgs );
@@ -138,6 +139,7 @@ public:
                                    const AString & linkerArgs,
                                    uint32_t flags,
                                    const Dependencies & assemblyResources,
+								   const Dependencies & preBuildDependencies,
                                    const AString & importLibName,
                                    Node * linkerStampExe,
                                    const AString & linkerStampExeArgs );

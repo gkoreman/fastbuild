@@ -24,6 +24,7 @@ public:
                          const AString & linkerArgs,
                          uint32_t flags,
                          const Dependencies & assemblyResources,
+						 const Dependencies & preBuildDependencies,
                          const AString & importLibName,
                          Node * linkerStampExe,
                          const AString & linkerStampExeArgs );
@@ -76,6 +77,7 @@ protected:
     uint32_t m_Flags;
     Dependencies m_AssemblyResources;
     Dependencies m_OtherLibraries;
+	Dependencies m_PreBuildDependencies;
     AString m_ImportLibName;
     const Node * m_LinkerStampExe;
     AString m_LinkerStampExeArgs;

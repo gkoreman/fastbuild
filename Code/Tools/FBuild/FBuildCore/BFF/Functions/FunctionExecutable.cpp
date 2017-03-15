@@ -149,6 +149,12 @@ FunctionExecutable::FunctionExecutable()
         return false; // GetNodeList will have emitted error
     }
 
+	Dependencies preBuildDependencies;
+	if (!GetNodeList(nodeGraph, funcStartIter, ".PreBuildDependencies", preBuildDependencies, false))
+	{
+		return false; // GetNodeList will have emitted error
+	}
+
     // Determine flags
     uint32_t flags = LinkerNode::DetermineFlags( linkerType, linker->GetString(), linkerOptions->GetString() );
     bool isADLL = ( ( flags & LinkerNode::LINK_FLAG_DLL ) != 0 );
@@ -193,6 +199,7 @@ FunctionExecutable::FunctionExecutable()
                               linkerOptions->GetString(),
                               flags,
                               assemblyResources,
+							  preBuildDependencies,
                               importLibName,
                               linkerStampExe,
                               linkerStampExeArgs );
@@ -207,6 +214,7 @@ FunctionExecutable::FunctionExecutable()
                               linkerOptions->GetString(),
                               flags,
                               assemblyResources,
+							  preBuildDependencies,
                               importLibName,
                               linkerStampExe,
                               linkerStampExeArgs );
