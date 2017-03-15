@@ -58,6 +58,8 @@
                                         + ' Ws2_32.lib'
                                         + ' LIBCMT.LIB'
                                         + ' User32.lib'
+                                        + ' libucrt.lib'
+										+ ' libvcruntime.lib'
         }
         Alias( '$ProjectName$-$Platform$-$Config$' ) { .Targets = '$ProjectName$-Exe-$Platform$-$Config$' }
     }

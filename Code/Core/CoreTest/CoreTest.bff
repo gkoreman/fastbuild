@@ -60,6 +60,8 @@
                                             + ' kernel32.lib'
                                             + ' Ws2_32.lib'
                                             + ' LIBCMT.LIB'
+											+ ' libucrtd.lib'
+											+ ' libvcruntimed.lib'
                                             + ' User32.lib'
         }
         Alias( '$ProjectName$-$Platform$-$Config$' ) { .Targets = '$ProjectName$-Exe-$Platform$-$Config$' }
