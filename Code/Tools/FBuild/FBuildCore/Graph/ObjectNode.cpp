@@ -47,7 +47,7 @@
 // Reflection
 //------------------------------------------------------------------------------
 REFLECT_NODE_BEGIN( ObjectNode, Node, MetaNone() )
-    REFLECT( m_Compiler,                            "Compiler",                         MetaFile() )
+    REFLECT( m_Compiler,                            "Compiler",                         MetaFile() + MetaAllowNonFile())
     REFLECT( m_CompilerOptions,                     "CompilerOptions",                  MetaNone() )
     REFLECT( m_CompilerOptionsDeoptimized,          "CompilerOptionsDeoptimized",       MetaOptional() )
     REFLECT( m_CompilerInputFile,                   "CompilerInputFile",                MetaFile() )
@@ -60,7 +60,7 @@ REFLECT_NODE_BEGIN( ObjectNode, Node, MetaNone() )
     REFLECT_ARRAY( m_CompilerForceUsing,            "CompilerForceUsing",               MetaOptional() + MetaFile() )
 
     // Preprocessor
-    REFLECT( m_Preprocessor,                        "Preprocessor",                     MetaOptional() + MetaFile() )
+    REFLECT( m_Preprocessor,                        "Preprocessor",                     MetaOptional() + MetaFile() + MetaAllowNonFile())
     REFLECT( m_PreprocessorOptions,                 "PreprocessorOptions",              MetaOptional() )
 
     REFLECT_ARRAY( m_PreBuildDependencyNames,       "PreBuildDependencies",             MetaOptional() + MetaFile() + MetaAllowNonFile() )
@@ -92,7 +92,7 @@ bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, co
 
     // .Compiler
     CompilerNode * compiler( nullptr );
-    if ( !((FunctionObjectList *)function)->GetCompilerNode( nodeGraph, iter, m_Compiler, compiler ) )
+    if ( !function->GetCompilerNode( nodeGraph, iter, m_Compiler, compiler ) )
     {
         return false; // GetCompilerNode will have emitted an error
     }
@@ -109,7 +109,7 @@ bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, co
     CompilerNode * preprocessor( nullptr );
     if ( m_Preprocessor.IsEmpty() == false )
     {
-        if ( !((FunctionObjectList *)function)->GetCompilerNode( nodeGraph, iter, m_Preprocessor, preprocessor ) )
+        if ( !function->GetCompilerNode( nodeGraph, iter, m_Preprocessor, preprocessor ) )
         {
             return false; // GetCompilerNode will have emitted an error
         }
@@ -237,7 +237,7 @@ ObjectNode::~ObjectNode()
 
     bool useCache = ShouldUseCache();
     bool useDist = GetFlag( FLAG_CAN_BE_DISTRIBUTED ) && m_AllowDistribution && FBuild::Get().GetOptions().m_AllowDistributed;
-    bool useSimpleDist = GetCompiler()->CastTo< CompilerNode >()->SimpleDistributionMode();
+    bool useSimpleDist = GetCompiler()->SimpleDistributionMode();
     bool usePreProcessor = !useSimpleDist && ( useCache || useDist || GetFlag( FLAG_GCC ) || GetFlag( FLAG_SNC ) || GetFlag( FLAG_CLANG ) || GetFlag( CODEWARRIOR_WII ) || GetFlag( GREENHILLS_WIIU ) || GetFlag( ObjectNode::FLAG_VBCC ) );
     if ( GetDedicatedPreprocessor() )
     {
@@ -323,7 +323,7 @@ ObjectNode::~ObjectNode()
 
     // spawn the process
     CompileHelper ch;
-    if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetName(), fullArgs ) ) // use response file for MSVC
+    if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) ) // use response file for MSVC
     {
         return NODE_RESULT_FAILED; // SpawnCompiler has logged error
     }
@@ -581,7 +581,7 @@ Node::BuildResult ObjectNode::DoBuild_QtRCC( Job * job )
         EmitCompilationMessage( fullArgs, false );
 
         CompileHelper ch;
-        if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetName(), fullArgs ) )
+        if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) )
         {
             return NODE_RESULT_FAILED; // compile has logged error
         }
@@ -623,7 +623,7 @@ Node::BuildResult ObjectNode::DoBuild_QtRCC( Job * job )
         }
 
         CompileHelper ch;
-        if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetName(), fullArgs ) )
+        if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) )
         {
             return NODE_RESULT_FAILED; // compile has logged error
         }
@@ -652,7 +652,7 @@ Node::BuildResult ObjectNode::DoBuild_QtRCC( Job * job )
 
     // spawn the process
     CompileHelper ch;
-    if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetName(), fullArgs ) )
+    if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) )
     {
         return NODE_RESULT_FAILED; // compile has logged error
     }
@@ -988,9 +988,16 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     }
 }
 
+// GetCompiler
+//-----------------------------------------------------------------------------
+CompilerNode * ObjectNode::GetCompiler() const
+{
+	return m_StaticDependencies[0].GetNode() ? m_StaticDependencies[0].GetNode()->CastTo< CompilerNode >() : nullptr;
+}
+
 // GetDedicatedPreprocessor
 //------------------------------------------------------------------------------
-Node * ObjectNode::GetDedicatedPreprocessor() const
+CompilerNode * ObjectNode::GetDedicatedPreprocessor() const
 {
     if ( m_Preprocessor.IsEmpty() )
     {
@@ -1001,7 +1008,8 @@ Node * ObjectNode::GetDedicatedPreprocessor() const
     {
         ++preprocessorIndex;
     }
-    return m_StaticDependencies[ preprocessorIndex ].GetNode();
+	Node* node = m_StaticDependencies[ preprocessorIndex ].GetNode();
+	return node ? node->CastTo< CompilerNode >() : nullptr;
 }
 
 // GetPDBName
@@ -1347,7 +1355,7 @@ void ObjectNode::EmitCompilationMessage( const Args & fullArgs, bool useDeoptimi
     output += '\n';
     if ( FLog::ShowInfo() || ( FBuild::IsValid() && FBuild::Get().GetOptions().m_ShowCommandLines ) || isRemote )
     {
-        output += useDedicatedPreprocessor ? GetDedicatedPreprocessor()->GetName().Get() : GetCompiler() ? GetCompiler()->GetName().Get() : "";
+        output += useDedicatedPreprocessor ? GetDedicatedPreprocessor()->GetExecutable().Get() : GetCompiler() ? GetCompiler()->GetExecutable().Get() : "";
         output += ' ';
         output += fullArgs.GetRawArgs();
         output += '\n';
@@ -1761,7 +1769,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
                 fullArgs += " -dD";
             }
 
-            const bool clangRewriteIncludes = GetCompiler()->CastTo< CompilerNode >()->IsClangRewriteIncludesEnabled();
+            const bool clangRewriteIncludes = GetCompiler()->IsClangRewriteIncludesEnabled();
             if ( isClang && clangRewriteIncludes )
             {
                 fullArgs += " -frewrite-includes";
@@ -1796,7 +1804,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
     {
         job->GetToolManifest()->GetRemoteFilePath( 0, remoteCompiler );
     }
-    const AString& compiler = job->IsLocal() ? GetCompiler()->GetName() : remoteCompiler;
+    const AString& compiler = job->IsLocal() ? GetCompiler()->GetExecutable() : remoteCompiler;
     if ( fullArgs.Finalize( compiler, GetName(), CanUseResponseFile() ) == false )
     {
         return false; // Finalize will have emitted an error
@@ -1833,7 +1841,7 @@ bool ObjectNode::BuildPreprocessedOutput( const Args & fullArgs, Job * job, bool
     CompileHelper ch( false ); // don't handle output (we'll do that)
     // TODO:A Add checks in BuildArgs for length of dedicated preprocessor
     if ( !ch.SpawnCompiler( job, GetName(),
-         useDedicatedPreprocessor ? GetDedicatedPreprocessor()->GetName() : GetCompiler()->GetName(),
+         useDedicatedPreprocessor ? GetDedicatedPreprocessor()->GetExecutable() : GetCompiler()->GetExecutable(),
          fullArgs ) )
     {
         // only output errors in failure case
@@ -1924,7 +1932,7 @@ void ObjectNode::TransferPreprocessedData( const char * data, size_t dataSize, J
         bool doVS2012Fixup = false;
         if ( GetCompiler()->GetType() == Node::COMPILER_NODE )
         {
-            CompilerNode* cn = GetCompiler()->CastTo< CompilerNode >();
+            CompilerNode* cn = GetCompiler();
             doVS2012Fixup = cn->IsVS2012EnumBugFixEnabled();
         }
 
@@ -2079,7 +2087,7 @@ bool ObjectNode::BuildFinalOutput( Job * job, const Args & fullArgs ) const
     AStackString<> workingDir;
     if ( job->IsLocal() )
     {
-        compiler = GetCompiler()->GetName();
+        compiler = GetCompiler()->GetExecutable();
     }
     else
     {

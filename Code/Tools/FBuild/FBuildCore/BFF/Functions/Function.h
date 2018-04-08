@@ -19,6 +19,7 @@ class Meta_File;
 class Meta_Path;
 class Node;
 class ReflectionInfo;
+class CompilerNode;
 
 // Function
 //------------------------------------------------------------------------------
@@ -63,6 +64,8 @@ public:
     static void CleanFilePaths( Array< AString > & files );
     void CleanFileNames( Array< AString > & fileNames ) const;
 
+	bool GetCompilerNode(NodeGraph & nodeGraph, const BFFIterator & iter, const AString & compiler, CompilerNode * & compilerNode) const;
+
     bool GetDirectoryListNodeList( NodeGraph & nodeGraph,
                                    const BFFIterator & iter,
                                    const Array< AString > & paths,
@@ -90,7 +93,7 @@ public:
                              Dependencies & nodes ) const;
 
     bool GetNodeList( NodeGraph & nodeGraph, const BFFIterator & iter, const char * name, Dependencies & nodes, bool required = false,
-                      bool allowCopyDirNodes = false, bool allowUnityNodes = false, bool allowRemoveDirNodes = false ) const;
+                      bool allowCopyDirNodes = false, bool allowUnityNodes = false, bool allowRemoveDirNodes = false, bool allowCompilerNodes = false ) const;
 
     static bool GetNodeList( NodeGraph & nodeGraph,
                              const BFFIterator & iter,
@@ -100,7 +103,8 @@ public:
                              Dependencies & nodes,
                              bool allowCopyDirNodes = false,
                              bool allowUnityNodes = false,
-                             bool allowRemoveDirNodes = false );
+                             bool allowRemoveDirNodes = false,
+                             bool allowCompilerNodes = false );
 
     bool GetFileNode( NodeGraph & nodeGraph, const BFFIterator & iter, Node * & fileNode, const char * name, bool required = false ) const;
 
