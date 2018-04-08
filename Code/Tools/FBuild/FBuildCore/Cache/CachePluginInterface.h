@@ -43,21 +43,22 @@ typedef void (STDCALL *CacheShutdownFunc)();
 //------------------------------------------------------------------------------
 // Store an item to the cache.  Return true on success.
 //
-// In:  cacheId  - string name of cache entry
-//      data     - data to store to cache
-//      dataSize - size in bytes of data to store
-// Out: bool     - (return) Indicates if item was stored to cache.
-typedef bool (STDCALL *CachePublishFunc)( const char * cacheId, const void * data, unsigned long long dataSize );
+// In:  cacheId   - string name of cache entry
+//      data      - data to store to cache
+//      dataSize  - size in bytes of data to store
+//      assetName - name of the node that is being stored. Informational only.
+// Out: bool      - (return) Indicates if item was stored to cache.
+typedef bool (STDCALL *CachePublishFunc)( const char * cacheId, const void * data, unsigned long long dataSize, const char* assetName );
 #ifdef CACHEPLUGIN_DLL_EXPORT
-    CACHEPLUGIN_DLL_EXPORT bool STDCALL CachePublish( const char * cacheId, const void * data, unsigned long long dataSize );
+    CACHEPLUGIN_DLL_EXPORT bool STDCALL CachePublish( const char * cacheId, const void * data, unsigned long long dataSize, const char* assetName );
 #endif
 
 // CacheRetrieve (Required)
 //------------------------------------------------------------------------------
-// Retrieve a previously stored item.  Returns true on succes.
+// Retrieve a previously stored item.  Returns true on success.
 //
 // In:  cacheId  - string name of cache entry.
-// Out: data     - on success, retreived data
+// Out: data     - on success, retrieved data
 //      dataSize - on success, size in bytes of retrieved data
 typedef bool (STDCALL *CacheRetrieveFunc)( const char * cacheId, void * & data, unsigned long long & dataSize );
 #ifdef CACHEPLUGIN_DLL_EXPORT

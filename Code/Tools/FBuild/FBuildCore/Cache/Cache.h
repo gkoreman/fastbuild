@@ -18,7 +18,7 @@ public:
 
     virtual bool Init( const AString & cachePath );
     virtual void Shutdown();
-    virtual bool Publish( const AString & cacheId, const void * data, size_t dataSize );
+    virtual bool Publish( const AString & cacheId, const void * data, size_t dataSize, const AString & assetName );
     virtual bool Retrieve( const AString & cacheId, void * & data, size_t & dataSize );
     virtual void FreeMemory( void * data, size_t dataSize );
     virtual bool OutputInfo( bool showProgress );

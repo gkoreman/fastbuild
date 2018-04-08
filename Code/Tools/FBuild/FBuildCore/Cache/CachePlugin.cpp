@@ -47,7 +47,7 @@
         #if defined( WIN64 )
             m_InitFunc      = (CacheInitFunc)       GetFunction( "CacheInit",       "?CacheInit@@YA_NPEBD@Z" );
             m_ShutdownFunc  = (CacheShutdownFunc)   GetFunction( "CacheShutdown",   "?CacheShutdown@@YAXXZ"  );
-            m_PublishFunc   = (CachePublishFunc)    GetFunction( "CachePublish",    "?CachePublish@@YA_NPEBDPEBX_K@Z" );
+            m_PublishFunc   = (CachePublishFunc)    GetFunction( "CachePublish",    "?CachePublish@@YA_NPEBDPEBX_K0@Z" );
             m_RetrieveFunc  = (CacheRetrieveFunc)   GetFunction( "CacheRetrieve",   "?CacheRetrieve@@YA_NPEBDAEAPEAXAEA_K@Z" );
             m_FreeMemoryFunc= (CacheFreeMemoryFunc) GetFunction( "CacheFreeMemory", "?CacheFreeMemory@@YAXPEAX_K@Z" );
             m_OutputInfoFunc= (CacheOutputInfoFunc) GetFunction( "CacheOutputInfo", "?CacheOutputInfo@@YA_N_N@Z", true ); // Optional
@@ -55,7 +55,7 @@
         #else
             m_InitFunc      = (CacheInitFunc)       GetFunction( "CacheInit",       "?CacheInit@@YG_NPBD@Z" );
             m_ShutdownFunc  = (CacheShutdownFunc)   GetFunction( "CacheShutdown",   "?CacheShutdown@@YGXXZ"  );
-            m_PublishFunc   = (CachePublishFunc)    GetFunction( "CachePublish",    "?CachePublish@@YG_NPBDPBX_K@Z" );
+            m_PublishFunc   = (CachePublishFunc)    GetFunction( "CachePublish",    "?CachePublish@@YG_NPBDPBX_K0@Z" );
             m_RetrieveFunc  = (CacheRetrieveFunc)   GetFunction( "CacheRetrieve",   "?CacheRetrieve@@YG_NPBDAAPAXAA_K@Z" );
             m_FreeMemoryFunc= (CacheFreeMemoryFunc) GetFunction( "CacheFreeMemory", "?CacheFreeMemory@@YGXPAX_K@Z" );
             m_OutputInfoFunc= (CacheOutputInfoFunc) GetFunction( "CacheOutputInfo", "?CacheOutputInfo@@YG_N_N@Z", true ); // Optional
@@ -146,11 +146,11 @@ void * CachePlugin::GetFunction( const char * friendlyName, const char * mangled
 
 // Publish
 //------------------------------------------------------------------------------
-/*virtual*/ bool CachePlugin::Publish( const AString & cacheId, const void * data, size_t dataSize )
+/*virtual*/ bool CachePlugin::Publish( const AString & cacheId, const void * data, size_t dataSize, const AString & assetName )
 {
     if ( m_PublishFunc )
     {
-        return (*m_PublishFunc)( cacheId.Get(), data, dataSize );
+        return (*m_PublishFunc)( cacheId.Get(), data, dataSize, assetName.Get() );
     }
     return false;
 }

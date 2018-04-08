@@ -1040,7 +1040,7 @@ const AString & ObjectNode::GetCacheName( Job * job ) const
 
     PROFILE_FUNCTION
 
-    // hash the pre-processed intput data
+    // hash the pre-processed input data
     ASSERT( job->GetData() );
     uint64_t a = xxHash::Calc64( job->GetData(), job->GetDataSize() );
 
@@ -1051,7 +1051,7 @@ const AString & ObjectNode::GetCacheName( Job * job ) const
         Args args;
         const bool useDeoptimization = false;
         const bool showIncludes = false;
-        const bool finalize = false; // Don't write args to reponse file
+        const bool finalize = false; // Don't write args to response file
         BuildArgs( job, args, PASS_COMPILE_PREPROCESSED, useDeoptimization, showIncludes, finalize );
         b = xxHash::Calc32( args.GetRawArgs().Get(), args.GetRawArgs().GetLength() );
     }
@@ -1229,7 +1229,7 @@ void ObjectNode::WriteToCache( Job * job )
             const void * data = c.GetResult();
             const size_t dataSize = c.GetResultSize();
 
-            if ( cache->Publish( cacheFileName, data, dataSize ) )
+            if ( cache->Publish( cacheFileName, data, dataSize, job->GetNode()->GetName() ) )
             {
                 // cache store complete
 

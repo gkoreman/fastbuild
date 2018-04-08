@@ -76,7 +76,7 @@ public:
 
 // Publish
 //------------------------------------------------------------------------------
-/*virtual*/ bool Cache::Publish( const AString & cacheId, const void * data, size_t dataSize )
+/*virtual*/ bool Cache::Publish( const AString & cacheId, const void * data, size_t dataSize, const AString & /*assetName */ )
 {
     AStackString<> cacheFileName;
     GetCacheFileName( cacheId, cacheFileName );

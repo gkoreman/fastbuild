@@ -36,9 +36,9 @@ void STDCALL CacheShutdown()
 
 // CachePublish
 //------------------------------------------------------------------------------
-bool STDCALL CachePublish( const char * cacheId, const void * data, unsigned long long dataSize )
+bool STDCALL CachePublish( const char * cacheId, const void * data, unsigned long long dataSize, const char * assetName )
 {
-    printf( "Publish : %s, %p, %llu\n", cacheId, data, dataSize );
+    printf( "Publish : %s, %p, %llu %s\n", cacheId, data, dataSize, assetName );
     return true;
 }
 
