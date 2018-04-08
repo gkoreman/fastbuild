@@ -51,6 +51,7 @@ public:
         CUDA_NVCC       = 7,
         QT_RCC          = 8,
         VBCC            = 9,
+		ORBIS_WAVE_PSSLC = 10,
     };
     CompilerFamily GetCompilerFamily() const { return static_cast<CompilerFamily>( m_CompilerFamilyEnum ); }
 
