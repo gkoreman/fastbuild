@@ -908,6 +908,8 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
 	{
 		if (isDistributableCompiler)
 			flags |= ObjectNode::FLAG_CAN_BE_DISTRIBUTED;
+
+		flags |= ObjectNode::FLAG_CAN_BE_CACHED;
 	}
 
 	if( compilerNode->SimpleDistributionMode() && compilerNode->SimpleDistributionAllowCache())
