@@ -66,6 +66,7 @@ REFLECT_NODE_BEGIN( ObjectNode, Node, MetaNone() )
     REFLECT_ARRAY( m_PreBuildDependencyNames,       "PreBuildDependencies",             MetaOptional() + MetaFile() + MetaAllowNonFile() )
 
     // Internal State
+    REFLECT( m_PrecompiledHeader,                   "PrecompiledHeader",                MetaHidden() )
     REFLECT( m_Flags,                               "Flags",                            MetaHidden() )
     REFLECT( m_PreprocessorFlags,                   "PreprocessorFlags",                MetaHidden() )
     REFLECT( m_PCHCacheKey,                         "PCHCacheKey",                      MetaHidden() )
@@ -82,7 +83,7 @@ ObjectNode::ObjectNode()
 
 // Initialize
 //------------------------------------------------------------------------------
-bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
+/*virtual*/ bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function )
 {
     // .PreBuildDependencies
     if ( !InitializePreBuildDependencies( nodeGraph, iter, function, m_PreBuildDependencyNames ) )
@@ -92,14 +93,14 @@ bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, co
 
     // .Compiler
     CompilerNode * compiler( nullptr );
-    if ( !function->GetCompilerNode( nodeGraph, iter, m_Compiler, compiler ) )
+    if ( !Function::GetCompilerNode( nodeGraph, iter, function, m_Compiler, compiler ) )
     {
         return false; // GetCompilerNode will have emitted an error
     }
 
     // .CompilerInputFile
     Dependencies compilerInputFile;
-    if ( !function->GetFileNode( nodeGraph, iter, m_CompilerInputFile, ".CompilerInputFile", compilerInputFile ) )
+    if ( !Function::GetFileNode( nodeGraph, iter, function, m_CompilerInputFile, ".CompilerInputFile", compilerInputFile ) )
     {
         return false; // GetFileNode will have emitted an error
     }
@@ -109,7 +110,7 @@ bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, co
     CompilerNode * preprocessor( nullptr );
     if ( m_Preprocessor.IsEmpty() == false )
     {
-        if ( !function->GetCompilerNode( nodeGraph, iter, m_Preprocessor, preprocessor ) )
+        if ( !Function::GetCompilerNode( nodeGraph, iter, function, m_Preprocessor, preprocessor ) )
         {
             return false; // GetCompilerNode will have emitted an error
         }
@@ -117,19 +118,25 @@ bool ObjectNode::Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, co
 
     // .CompilerForceUsing
     Dependencies compilerForceUsing;
-    if ( !function->GetFileNodes( nodeGraph, iter, m_CompilerForceUsing, ".CompilerForceUsing", compilerForceUsing ) )
+    if ( !Function::GetFileNodes( nodeGraph, iter, function, m_CompilerForceUsing, ".CompilerForceUsing", compilerForceUsing ) )
     {
         return false; // GetFileNode will have emitted an error
     }
 
+    // Precompiled Header
+    Dependencies precompiledHeader;
+    if ( m_PrecompiledHeader.IsEmpty() == false )
+    {
+        // m_PrecompiledHeader is only set if our associated ObjectList or Library created one
+        VERIFY( Function::GetFileNode( nodeGraph, iter, function, m_PrecompiledHeader, ".PrecompiledHeader", precompiledHeader ) );
+        ASSERT( precompiledHeader.GetSize() == 1 );
+    }
+
     // Store Dependencies
-    m_StaticDependencies.SetCapacity( 1 + 1 + ( m_PrecompiledHeader ? 1 : 0 ) + ( preprocessor ? 1 : 0 ) + compilerForceUsing.GetSize() );
+    m_StaticDependencies.SetCapacity( 1 + 1 + precompiledHeader.GetSize() + ( preprocessor ? 1 : 0 ) + compilerForceUsing.GetSize() );
     m_StaticDependencies.Append( Dependency( compiler ) );
     m_StaticDependencies.Append( compilerInputFile );
-    if ( m_PrecompiledHeader )
-    {
-        m_StaticDependencies.Append( Dependency( m_PrecompiledHeader ) );
-    }
+    m_StaticDependencies.Append( precompiledHeader );
     if ( preprocessor )
     {
         m_StaticDependencies.Append( Dependency( preprocessor ) );
@@ -746,34 +753,21 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     return true;
 }
 
-// Load
-//------------------------------------------------------------------------------
-/*static*/ Node * ObjectNode::Load( NodeGraph & nodeGraph, IOStream & stream )
-{
-    NODE_LOAD( AStackString<>, name );
-
-    ObjectNode * node = nodeGraph.CreateObjectNode( name );
-
-    if ( node->Deserialize( nodeGraph, stream ) == false )
-    {
-        return nullptr;
-    }
-
-    // TODO:B Use normal serialization
-    NODE_LOAD_NODE_LINK( Node, precompiledHeader );
-    node->m_PrecompiledHeader = precompiledHeader ? precompiledHeader->CastTo< ObjectNode >() : nullptr;
-
-    return node;
-}
-
 // LoadRemote
 //------------------------------------------------------------------------------
 /*static*/ Node * ObjectNode::LoadRemote( IOStream & stream )
 {
-    NODE_LOAD( AStackString<>,  name );
-    NODE_LOAD( AStackString<>,  sourceFile );
-    NODE_LOAD( uint32_t,        flags );
-    NODE_LOAD( AStackString<>,  compilerArgs );
+    AStackString<> name; 
+    AStackString<> sourceFile; 
+    uint32_t flags; 
+    AStackString<> compilerArgs; 
+    if ( ( stream.Read( name ) == false ) ||
+         ( stream.Read( sourceFile ) == false ) ||
+         ( stream.Read( flags ) == false ) ||
+         ( stream.Read( compilerArgs ) == false ) )
+    {
+        return nullptr; 
+    }
 
     NodeProxy * srcFile = FNEW( NodeProxy( sourceFile ) );
 
@@ -809,7 +803,7 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
         case CompilerNode::CompilerFamily::CUDA_NVCC:       flags |= FLAG_CUDA_NVCC;        break;
         case CompilerNode::CompilerFamily::QT_RCC:          flags |= FLAG_QT_RCC;           break;
         case CompilerNode::CompilerFamily::VBCC:            flags |= FLAG_VBCC;             break;
-		case CompilerNode::CompilerFamily::ORBIS_WAVE_PSSLC:flags |= FLAG_ORBIS_WAVE_PSSLC; break;
+        case CompilerNode::CompilerFamily::ORBIS_WAVE_PSSLC:flags |= FLAG_ORBIS_WAVE_PSSLC; break;
     }
 
     // Check MS compiler options
@@ -905,18 +899,18 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     }
 
 	if (flags & ObjectNode::FLAG_ORBIS_WAVE_PSSLC)
-	{
-		if (isDistributableCompiler)
-			flags |= ObjectNode::FLAG_CAN_BE_DISTRIBUTED;
+    {
+        if ( isDistributableCompiler )
+            flags |= ObjectNode::FLAG_CAN_BE_DISTRIBUTED;
 
 		flags |= ObjectNode::FLAG_CAN_BE_CACHED;
 	}
 
 	if( compilerNode->SimpleDistributionMode() && compilerNode->SimpleDistributionAllowCache())
 	{
-		// Can cache objects
-		flags |= ObjectNode::FLAG_CAN_BE_CACHED;
-	}
+        // Can cache objects
+        flags |= ObjectNode::FLAG_CAN_BE_CACHED;
+    }
 
     return flags;
 }
@@ -967,17 +961,6 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     return ( AString::StrNCmp( token.Get() + 1, arg, argLen ) == 0 );
 }
 
-// Save
-//------------------------------------------------------------------------------
-/*virtual*/ void ObjectNode::Save( IOStream & stream ) const
-{
-    NODE_SAVE( m_Name );
-    Node::Serialize( stream );
-
-    // TODO:B Use normal serialization
-    NODE_SAVE_NODE_LINK( m_PrecompiledHeader );
-}
-
 // SaveRemote
 //------------------------------------------------------------------------------
 /*virtual*/ void ObjectNode::SaveRemote( IOStream & stream ) const
@@ -986,20 +969,20 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     ASSERT( m_CompilerForceUsing.IsEmpty() );
 
     // Save minimal information for the remote worker
-    NODE_SAVE( m_Name );
-    NODE_SAVE( GetSourceFile()->GetName() );
-    NODE_SAVE( m_Flags );
+    stream.Write( m_Name );
+    stream.Write( GetSourceFile()->GetName() );
+    stream.Write( m_Flags );
 
     // TODO:B would be nice to make ShouldUseDeoptimization cache the result for this build
     // instead of opening the file again.
     const bool useDeoptimization = ShouldUseDeoptimization();
     if ( useDeoptimization )
     {
-        NODE_SAVE( m_CompilerOptionsDeoptimized );
+        stream.Write( m_CompilerOptionsDeoptimized );
     }
     else
     {
-        NODE_SAVE( m_CompilerOptions );
+        stream.Write( m_CompilerOptions );
     }
 }
 
@@ -1007,7 +990,9 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
 //-----------------------------------------------------------------------------
 CompilerNode * ObjectNode::GetCompiler() const
 {
-	return m_StaticDependencies[0].GetNode() ? m_StaticDependencies[0].GetNode()->CastTo< CompilerNode >() : nullptr;
+    // node can be null if compiling remotely
+    Node * node = m_StaticDependencies[0].GetNode();
+    return node ? node->CastTo< CompilerNode >() : nullptr;
 }
 
 // GetDedicatedPreprocessor
@@ -1019,12 +1004,19 @@ CompilerNode * ObjectNode::GetDedicatedPreprocessor() const
         return nullptr;
     }
     size_t preprocessorIndex = 2;
-    if ( m_PrecompiledHeader )
+    if ( m_PrecompiledHeader.IsEmpty() == false )
     {
         ++preprocessorIndex;
     }
-	Node* node = m_StaticDependencies[ preprocessorIndex ].GetNode();
-	return node ? node->CastTo< CompilerNode >() : nullptr;
+    return m_StaticDependencies[ preprocessorIndex ].GetNode()->CastTo< CompilerNode >();
+}
+
+// GetPrecompiledHeader()
+//------------------------------------------------------------------------------
+ObjectNode * ObjectNode::GetPrecompiledHeader() const
+{
+    ASSERT( m_PrecompiledHeader.IsEmpty() == false );
+    return m_StaticDependencies[ 2 ].GetNode()->CastTo< ObjectNode >();
 }
 
 // GetPDBName
@@ -1086,7 +1078,7 @@ const AString & ObjectNode::GetCacheName( Job * job ) const
     uint64_t d = 0;
     if ( GetFlag( FLAG_USING_PCH ) && GetFlag( FLAG_MSVC ) )
     {
-        d = m_PrecompiledHeader->CastTo< ObjectNode >()->m_PCHCacheKey;
+        d = GetPrecompiledHeader()->m_PCHCacheKey;
         ASSERT( d != 0 ); // Should not be in here if PCH is not cached
     }
 
@@ -1469,7 +1461,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
     const bool isCUDA           = ( useDedicatedPreprocessor ) ? GetPreprocessorFlag( FLAG_CUDA_NVCC ) : GetFlag( FLAG_CUDA_NVCC );
     const bool isQtRCC          = ( useDedicatedPreprocessor ) ? GetPreprocessorFlag( FLAG_QT_RCC ) : GetFlag( FLAG_QT_RCC );
     const bool isVBCC           = ( useDedicatedPreprocessor ) ? GetPreprocessorFlag( FLAG_VBCC ) : GetFlag( FLAG_VBCC );
-	const bool isOrbisWavePsslc = (useDedicatedPreprocessor)   ? GetPreprocessorFlag( FLAG_ORBIS_WAVE_PSSLC) : GetFlag(FLAG_ORBIS_WAVE_PSSLC);
+    const bool isOrbisWavePsslc = ( useDedicatedPreprocessor ) ? GetPreprocessorFlag( FLAG_ORBIS_WAVE_PSSLC) : GetFlag(FLAG_ORBIS_WAVE_PSSLC);
 
     const size_t numTokens = tokens.GetSize();
     for ( size_t i = 0; i < numTokens; ++i )
@@ -1480,7 +1472,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
         // -o removal for preprocessor
         if ( pass == PASS_PREPROCESSOR_ONLY )
         {
-            if ( isGCC || isSNC || isClang || isCWWii || isGHWiiU || isCUDA || isVBCC || isOrbisWavePsslc)
+            if ( isGCC || isSNC || isClang || isCWWii || isGHWiiU || isCUDA || isVBCC || isOrbisWavePsslc )
             {
                 if ( StripTokenWithArg( "-o", token, i ) )
                 {
@@ -1833,7 +1825,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
 //------------------------------------------------------------------------------
 void ObjectNode::ExpandCompilerForceUsing( Args & fullArgs, const AString & pre, const AString & post ) const
 {
-    const size_t startIndex = 2 + ( m_PrecompiledHeader ? 1 : 0 ) + ( !m_Preprocessor.IsEmpty() ? 1 : 0 ); // Skip Compiler, InputFile, PCH and Preprocessor
+    const size_t startIndex = 2 + ( !m_PrecompiledHeader.IsEmpty() ? 1 : 0 ) + ( !m_Preprocessor.IsEmpty() ? 1 : 0 ); // Skip Compiler, InputFile, PCH and Preprocessor
     const size_t endIndex = m_StaticDependencies.GetSize();
     for ( size_t i=startIndex; i<endIndex; ++i )
     {
@@ -2070,9 +2062,15 @@ bool ObjectNode::WriteTmpFile( Job * job, AString & tmpDirectory, AString & tmpF
     tmpFileName += fileName;
     if ( WorkerThread::CreateTempFile( tmpFileName, tmpFile ) == false )
     {
-        job->Error( "Failed to create temp file '%s' to build '%s' (error %u)", tmpFileName.Get(), GetName().Get(), Env::GetLastErr() );
-        job->OnSystemError();
-        return NODE_RESULT_FAILED;
+        FileIO::WorkAroundForWindowsFilePermissionProblem( tmpFileName, FileStream::WRITE_ONLY, 10 ); // 10s max wait
+
+        // Try again
+        if ( WorkerThread::CreateTempFile( tmpFileName, tmpFile ) == false )
+        {
+            job->Error( "Failed to create temp file '%s' to build '%s' (error %u)", tmpFileName.Get(), GetName().Get(), Env::GetLastErr() );
+            job->OnSystemError();
+            return NODE_RESULT_FAILED;
+        }
     }
     if ( tmpFile.Write( dataToWrite, dataToWriteSize ) != dataToWriteSize )
     {
@@ -2252,6 +2250,15 @@ bool ObjectNode::CompileHelper::SpawnCompiler( Job * job,
             return;
         }
 
+        // If process is manually terminated by a user, consider that a system failure
+        // Only do so if there is no error output, as some compilers (like Clang) also
+        // use return code 1 for normal compilation failure
+        if ( ( result == 0x1 ) && ( stdErr == nullptr ) )
+        {
+            job->OnSystemError(); // task will be retried on another worker
+            return;
+        }
+
         // If DLLs are not correctly sync'd, add an extra message to help the user
         if ( (uint32_t)result == 0xC000007B ) // STATUS_INVALID_IMAGE_FORMAT
         {
@@ -2302,14 +2309,11 @@ bool ObjectNode::CompileHelper::SpawnCompiler( Job * job,
         if ( objectNode->GetFlag( ObjectNode::FLAG_CLANG ) )
         {
             // When clang fails due to low disk space
-            if ( result == 0x01 )
+            // TODO:C Should we check for localized msg?
+            if ( stdErr && ( strstr( stdErr, "IO failure on output stream" ) ) )
             {
-                // TODO:C Should we check for localized msg?
-                if ( stdErr && ( strstr( stdErr, "IO failure on output stream" ) ) )
-                {
-                    job->OnSystemError();
-                    return;
-                }
+                job->OnSystemError();
+                return;
             }
         }
 
@@ -2317,14 +2321,11 @@ bool ObjectNode::CompileHelper::SpawnCompiler( Job * job,
         if ( objectNode->GetFlag( ObjectNode::FLAG_GCC ) )
         {
             // When gcc fails due to low disk space
-            if ( result == 0x01 )
+            // TODO:C Should we check for localized msg?
+            if ( stdErr && ( strstr( stdErr, "No space left on device" ) ) )
             {
-                // TODO:C Should we check for localized msg?
-                if ( stdErr && ( strstr( stdErr, "No space left on device" ) ) )
-                {
-                    job->OnSystemError();
-                    return;
-                }
+                job->OnSystemError();
+                return;
             }
         }
     #else
@@ -2400,7 +2401,7 @@ bool ObjectNode::ShouldUseCache() const
     {
         // If the PCH is not in the cache, then no point looking there
         // for objects and also no point storing them
-        if ( m_PrecompiledHeader->CastTo< ObjectNode >()->m_PCHCacheKey == 0 )
+        if ( GetPrecompiledHeader()->m_PCHCacheKey == 0 )
         {
             return false;
         }

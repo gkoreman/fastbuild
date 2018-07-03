@@ -20,18 +20,16 @@ class CSNode : public FileNode
     REFLECT_NODE_DECLARE( CSNode )
 public:
     explicit CSNode();
-    bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function );
+    virtual bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function ) override;
     virtual ~CSNode();
 
     static inline Node::Type GetTypeS() { return Node::CS_NODE; }
 
-    virtual void Save( IOStream & stream ) const override;
-    static Node * Load( NodeGraph & nodeGraph, IOStream & stream );
 private:
     virtual bool DoDynamicDependencies( NodeGraph & nodeGraph, bool forceClean ) override;
     virtual BuildResult DoBuild( Job * job ) override;
 
-	CompilerNode * GetCompiler() const;
+    CompilerNode * GetCompiler() const;
 
     void EmitCompilationMessage( const Args & fullArgs ) const;
 

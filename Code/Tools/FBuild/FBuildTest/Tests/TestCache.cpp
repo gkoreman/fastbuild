@@ -1,15 +1,11 @@
-// TestExe.cpp
+// TestCache.cpp
 //------------------------------------------------------------------------------
 
 // Includes
 //------------------------------------------------------------------------------
 #include "FBuildTest.h"
 #include "Tools/FBuild/FBuildCore/FBuild.h"
-//#include "Tools/FBuild/FBuildCore/Graph/ExeNode.h"
-//#include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
-
-//#include "Core/FileIO/FileIO.h"
-//#include "Core/Process/Process.h"
+#include "Tools/FBuild/FBuildCore/Graph/SettingsNode.h"
 #include "Core/Strings/AStackString.h"
 
 // TestCache
@@ -19,67 +15,81 @@ class TestCache : public FBuildTest
 private:
     DECLARE_TESTS
 
-    void CacheCustomCompilerOutput() const;
+    void Write() const;
+    void Read() const;
+    void ReadWrite() const;
 };
 
 // Register Tests
 //------------------------------------------------------------------------------
 REGISTER_TESTS_BEGIN( TestCache )
-    REGISTER_TEST( CacheCustomCompilerOutput )
+    REGISTER_TEST( Write )
+    REGISTER_TEST( Read )
+    REGISTER_TEST( ReadWrite )
 REGISTER_TESTS_END
 
-// CacheCustomCompilerOutput
+// Write
 //------------------------------------------------------------------------------
-void TestCache::CacheCustomCompilerOutput() const
+void TestCache::Write() const
 {
-	FBuildTestOptions options;
-	options.m_ForceCleanBuild = true;
-	options.m_UseCacheRead = true;
-	options.m_UseCacheWrite = true;
-	options.m_ShowInfo = true;
-	options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCache/compiler.bff";
+    FBuildTestOptions options;
+    options.m_ForceCleanBuild = true;
+    options.m_UseCacheWrite = true;
+    options.m_CacheVerbose = true;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCache/cache.bff";
 
-	// Create SimpleCompiler
-	{
-		FBuild fBuild(options);
-		TEST_ASSERT(fBuild.Initialize());
+    FBuild fBuild( options );
+    TEST_ASSERT( fBuild.Initialize() );
 
-		TEST_ASSERT(fBuild.Build(AStackString<>("all")));
-	}
-	
-	
-	options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCache/cache.bff";
+    TEST_ASSERT( fBuild.Build( AStackString<>( "ObjectList" ) ) );
 
-	// Test cache not being filled
-	{
-		FBuild fBuild(options);
-		TEST_ASSERT(fBuild.Initialize());
+    // Ensure cache was written to
+    const FBuildStats::Stats & objStats = fBuild.GetStats().GetStatsFor( Node::OBJECT_NODE );
+    TEST_ASSERT( objStats.m_NumCacheStores == 2 );
+    TEST_ASSERT( objStats.m_NumBuilt == 2 );
+}
 
-		TEST_ASSERT(fBuild.Build(AStackString<>("CompileResources-NonCaching")));
-		TEST_ASSERT(fBuild.GetStats().GetCacheStores() == 0);
-		TEST_ASSERT(fBuild.GetStats().GetCacheHits() == 0);
-	}
+// Read
+//------------------------------------------------------------------------------
+void TestCache::Read() const
+{
+    FBuildTestOptions options;
+    options.m_ForceCleanBuild = true;
+    options.m_UseCacheRead = true;
+    options.m_CacheVerbose = true;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCache/cache.bff";
 
-	// Test cache getting filled
-	{
-		FBuild fBuild(options);
-		TEST_ASSERT(fBuild.Initialize());
+    FBuild fBuild( options );
+    TEST_ASSERT( fBuild.Initialize() );
 
-		TEST_ASSERT(fBuild.Build(AStackString<>("CompileResources-Caching")));
-		TEST_ASSERT(fBuild.GetStats().GetCacheStores() == 1);
-		TEST_ASSERT(fBuild.GetStats().GetCacheHits() == 0);
-	}
+    TEST_ASSERT( fBuild.Build( AStackString<>( "ObjectList" ) ) );
 
-	// Test cache getting filled
-	{
-		options.m_UseCacheWrite = false;
-		FBuild fBuild(options);
-		TEST_ASSERT(fBuild.Initialize());
+    // Ensure cache was written to
+    const FBuildStats::Stats & objStats = fBuild.GetStats().GetStatsFor( Node::OBJECT_NODE );
+    TEST_ASSERT( objStats.m_NumCacheHits == 2 );
+    TEST_ASSERT( objStats.m_NumBuilt == 0 );
+}
 
-		TEST_ASSERT(fBuild.Build(AStackString<>("CompileResources-Caching")));
-		TEST_ASSERT(fBuild.GetStats().GetCacheStores() == 0);
-		TEST_ASSERT(fBuild.GetStats().GetCacheHits() == 1);
-	}
+// ReadWrite
+//------------------------------------------------------------------------------
+void TestCache::ReadWrite() const
+{
+    FBuildTestOptions options;
+    options.m_ForceCleanBuild = true;
+    options.m_UseCacheRead = true;
+    options.m_UseCacheWrite = true;
+    options.m_CacheVerbose = true;
+    options.m_ConfigFile = "Tools/FBuild/FBuildTest/Data/TestCache/cache.bff";
+
+    FBuild fBuild( options );
+    TEST_ASSERT( fBuild.Initialize() );
+
+    TEST_ASSERT( fBuild.Build( AStackString<>( "ObjectList" ) ) );
+
+    // Ensure cache was written to
+    const FBuildStats::Stats & objStats = fBuild.GetStats().GetStatsFor( Node::OBJECT_NODE );
+    TEST_ASSERT( objStats.m_NumCacheHits == 2 );
+    TEST_ASSERT( objStats.m_NumBuilt == 0 );
 }
 
 //------------------------------------------------------------------------------
