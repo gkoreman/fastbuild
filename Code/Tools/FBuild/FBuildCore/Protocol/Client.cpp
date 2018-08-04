@@ -529,7 +529,7 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobR
     // get result data (built data or errors if failed)
     uint32_t size = 0;
     ms.Read( size );
-    const void * data = (const char *)ms.GetData() + ms.Tell();
+    const char * data = (const char *)ms.GetData() + ms.Tell();
 
     {
         MutexHolder mh( ss->m_Mutex );
@@ -553,42 +553,56 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobR
 
     if ( result == true )
     {
-        // built ok - serialize to disc
-
+        // built ok - serialize to disk
         ObjectNode * objectNode = job->GetNode()->CastTo< ObjectNode >();
-        const AString & nodeName = objectNode->GetName();
-        if ( Node::EnsurePathExistsForFile( nodeName ) == false )
-        {
-            FLOG_ERROR( "Failed to create path for '%s'", nodeName.Get() );
-            result = false;
-        }
-        else
-        {
-            const ObjectNode * on = job->GetNode()->CastTo< ObjectNode >();
-            const uint32_t firstFileSize = *(uint32_t *)data;
-            const uint32_t secondFileSize = on->IsUsingPDB() ? *(uint32_t *)( (const char *)data + sizeof( uint32_t ) + firstFileSize ) : 0;
 
-            result = WriteFileToDisk( nodeName, (const char *)data + sizeof( uint32_t ), firstFileSize );
-            if ( result && on->IsUsingPDB() )
-            {
-                data = (const void *)( (const char *)data + sizeof( uint32_t ) + firstFileSize );
-                ASSERT( ( firstFileSize + secondFileSize + ( sizeof( uint32_t ) * 2 ) ) == size );
+		bool allOutputFilePathsExist = true;
 
-                AStackString<> pdbName;
-                on->GetPDBName( pdbName );
-                result = WriteFileToDisk( pdbName, (const char *)data + sizeof( uint32_t ), secondFileSize );
-            }
+		for( const Dependency& outputFileNode : objectNode->GetOutputFiles() )
+		{
+			const AString & nodeName = outputFileNode.GetNode()->GetName();
+			if( Node::EnsurePathExistsForFile( nodeName ) == false )
+			{
+				FLOG_ERROR( "Failed to create path for '%s'", nodeName.Get() );
+				allOutputFilePathsExist = false;
+				result = false;
+				break;
+			}
+		}
+
+        if(allOutputFilePathsExist)
+        {
+			for( const Dependency& outputFileNode : objectNode->GetOutputFiles() )
+			{
+				const uint32_t fileSize = *(uint32_t *)data;
+				data += sizeof( uint32_t );
+				result = WriteFileToDisk( outputFileNode.GetNode()->GetName(), data, fileSize );
+				data += fileSize;
+				if( !result )
+					break;
+			}
+
+			// Save the PDB - can't be a regular OutputFile because it is only used when built remotely
+			if( result == true && objectNode->IsUsingPDB() )
+			{
+				const uint32_t fileSize = *(uint32_t *)data;
+				data += sizeof( uint32_t );
+				AStackString<> pdbName;
+				objectNode->GetPDBName( pdbName );
+				result = WriteFileToDisk( pdbName, data, fileSize );
+				data += fileSize;
+			}
+			
 
             if ( result == true )
             {
                 // record build time
-                FileNode * f = (FileNode *)job->GetNode();
-                f->m_Stamp = FileIO::GetFileLastWriteTime( nodeName );
+                objectNode->m_Stamp = FileIO::GetFileLastWriteTime( objectNode->GetPrimaryOutputFile()->GetName() );
 
                 // record time taken to build
-                f->SetLastBuildTime( buildTime );
-                f->SetStatFlag(Node::STATS_BUILT);
-                f->SetStatFlag(Node::STATS_BUILT_REMOTE);
+                objectNode->SetLastBuildTime( buildTime );
+                objectNode->SetStatFlag(Node::STATS_BUILT);
+                objectNode->SetStatFlag(Node::STATS_BUILT_REMOTE);
 
                 // commit to cache?
                 if ( FBuild::Get().GetOptions().m_UseCacheWrite &&
@@ -599,7 +613,7 @@ void Client::Process( const ConnectionInfo * connection, const Protocol::MsgJobR
             }
             else
             {
-                ((FileNode *)job->GetNode())->GetStatFlag( Node::STATS_FAILED );
+                objectNode->GetStatFlag( Node::STATS_FAILED );
             }
         }
     }

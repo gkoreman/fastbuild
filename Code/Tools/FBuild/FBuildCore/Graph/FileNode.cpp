@@ -6,6 +6,8 @@
 #include "Tools/FBuild/FBuildCore/PrecompiledHeader.h"
 
 #include "FileNode.h"
+#include "ObjectNode.h"
+#include "Tools/FBuild/FBuildCore/Error.h"
 #include "Tools/FBuild/FBuildCore/FBuild.h"
 #include "Tools/FBuild/FBuildCore/FLog.h"
 #include "Tools/FBuild/FBuildCore/Graph/NodeGraph.h"
@@ -40,6 +42,43 @@ FileNode::FileNode( const AString & fileName, uint32_t controlFlags )
 // DESTRUCTOR
 //------------------------------------------------------------------------------
 FileNode::~FileNode() = default;
+
+
+// PostLoad
+//------------------------------------------------------------------------------
+/*virtual*/ void FileNode::PostLoad( NodeGraph & /*nodeGraph*/ )
+{
+	if( GetType() == Node::FILE_NODE )
+	{
+		// Since this node depends on it's creator (as a static dependency)
+		// we know that the creator is serialized and deserialized before 
+		// this node is loaded and it is safe to link this node up with it now.
+		Node* creator = GetCreator();
+		if( creator != nullptr )
+		{
+			ObjectNode* objectNode = creator->CastTo<ObjectNode>();
+			objectNode->AppendOutputFile( this );
+		}
+	}
+}
+
+void FileNode::InitializeAsOutputFile( const BFFIterator & funcStartIter, const Function * function, Node & creator)
+{
+	if( m_StaticDependencies.IsEmpty() )
+	{
+		m_StaticDependencies.SetCapacity( 1 );
+		m_StaticDependencies.Append( Dependency( &creator ) );
+	}
+	else
+	{
+		ASSERT( m_StaticDependencies.GetSize() == 1 );
+		if( m_StaticDependencies[0].GetNode() != &creator )
+		{
+			// TODO: Consider creating another error type for this?
+			Error::Error_1100_AlreadyDefined( funcStartIter, function, GetName() );
+		}
+	}
+}
 
 // DoBuild
 //------------------------------------------------------------------------------

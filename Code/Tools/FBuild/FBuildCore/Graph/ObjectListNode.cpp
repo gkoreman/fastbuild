@@ -58,6 +58,10 @@ REFLECT_NODE_BEGIN( ObjectListNode, Node, MetaNone() )
     REFLECT( m_Preprocessor,                        "Preprocessor",                     MetaOptional() + MetaFile() + MetaAllowNonFile() )
     REFLECT( m_PreprocessorOptions,                 "PreprocessorOptions",              MetaOptional() )
     REFLECT_ARRAY( m_PreBuildDependencyNames,       "PreBuildDependencies",             MetaOptional() + MetaFile() + MetaAllowNonFile() )
+	// Multiple Output File Support
+	REFLECT( m_TargetOutputPrefix,                  "TargetOutputPrefix",               MetaOptional() )
+    REFLECT( m_TargetOutputExtension,               "TargetOutputExtension",            MetaOptional() )
+
 
     // Internal State
     REFLECT( m_UsingPrecompiledHeader,              "UsingPrecompiledHeader",           MetaHidden() )
@@ -114,7 +118,7 @@ ObjectListNode::ObjectListNode()
 
     // .PCHInputFile
     const bool usingPCH = ( m_PCHInputFile.IsEmpty() == false );
-    Node * precompiledHeader = nullptr;
+    Node * precompiledHeaderFileNode = nullptr;
     if ( usingPCH )
     {
         // .PCHOutput and .PCHOptions are required is .PCHInputFile is set
@@ -143,8 +147,11 @@ ObjectListNode::ObjectListNode()
             return false;
         }
 
-        precompiledHeader = CreateObjectNode( nodeGraph, iter, function, pchFlags, 0, m_PCHOptions, AString::GetEmpty(), AString::GetEmpty(), AString::GetEmpty(), m_PCHOutputFile, m_PCHInputFile, pchObjectName );
-        if ( precompiledHeader == nullptr )
+		AStackString<> pchObjectNodeName(m_PCHOutputFile);
+		pchObjectNodeName += "?Object?";
+		ObjectNode* precompiledHeaderObjectNode = CreateObjectNode( nodeGraph, iter, function, pchFlags, 0, m_PCHOptions, AString::GetEmpty(), AString::GetEmpty(), AString::GetEmpty(), pchObjectNodeName, m_PCHOutputFile, m_PCHInputFile, pchObjectName );
+		precompiledHeaderFileNode = precompiledHeaderObjectNode->GetPrimaryOutputFile();
+		if ( precompiledHeaderFileNode == nullptr )
         {
             return false; // CreateObjectNode will have emitted an error
         }
@@ -225,15 +232,15 @@ ObjectListNode::ObjectListNode()
     ((FunctionObjectList *)function)->GetExtraOutputPaths( m_CompilerOptions, m_ExtraPDBPath, m_ExtraASMPath );
 
     // Store dependencies
-    m_StaticDependencies.SetCapacity( m_StaticDependencies.GetSize() + 1 + ( preprocessorNode ? 1 : 0 ) + ( precompiledHeader ? 1 : 0 ) + compilerInputPath.GetSize() + m_NumCompilerInputUnity + m_NumCompilerInputFiles );
+    m_StaticDependencies.SetCapacity( m_StaticDependencies.GetSize() + 1 + ( preprocessorNode ? 1 : 0 ) + ( precompiledHeaderFileNode ? 1 : 0 ) + compilerInputPath.GetSize() + m_NumCompilerInputUnity + m_NumCompilerInputFiles );
     m_StaticDependencies.Append( Dependency( compilerNode ) );
     if ( preprocessorNode )
     {
         m_StaticDependencies.Append( Dependency( preprocessorNode ) );
     }
-    if ( precompiledHeader )
+    if ( precompiledHeaderFileNode )
     {
-        m_StaticDependencies.Append( Dependency( precompiledHeader ) );
+        m_StaticDependencies.Append( Dependency( precompiledHeaderFileNode ) );
     }
     m_StaticDependencies.Append( compilerInputPath );
     m_StaticDependencies.Append( compilerInputUnity );
@@ -241,7 +248,7 @@ ObjectListNode::ObjectListNode()
     //m_StaticDependencies.Append( compilerForceUsing ); // NOTE: Deliberately not depending on this
 
     // Take note of how many things are not to be treated as inputs (the compiler and preprocessor)
-    m_ObjectListInputStartIndex += ( 1 + ( preprocessorNode ? 1 : 0 ) + ( precompiledHeader ? 1 : 0 ) );
+    m_ObjectListInputStartIndex += ( 1 + ( preprocessorNode ? 1 : 0 ) + ( precompiledHeaderFileNode ? 1 : 0 ) );
     m_ObjectListInputEndIndex = (uint32_t)m_StaticDependencies.GetSize();
 
     return true;
@@ -271,9 +278,9 @@ ObjectListNode::~ObjectListNode() = default;
         // On Windows, with MSVC we compile a cpp file to generate the PCH
         // Filter here to ensure that doesn't get compiled twice
         Node * pchCPP = nullptr;
-        if ( m_UsingPrecompiledHeader && GetPrecompiledHeader()->IsMSVC() )
+        if ( m_UsingPrecompiledHeader && GetPrecompiledHeaderObjectNode()->IsMSVC() )
         {
-            pchCPP = GetPrecompiledHeader()->GetPrecompiledHeaderCPPFile();
+            pchCPP = GetPrecompiledHeaderObjectNode()->GetPrecompiledHeaderCPPFile();
         }
     #endif
 
@@ -395,7 +402,7 @@ ObjectListNode::~ObjectListNode() = default;
     // b) a DLL or executable links our .obj files
     if ( m_UsingPrecompiledHeader )
     {
-        m_DynamicDependencies.Append( Dependency( GetPrecompiledHeader() ) );
+        m_DynamicDependencies.Append( Dependency( GetPrecompiledHeaderFileNode() ) );
     }
 
     return true;
@@ -447,8 +454,7 @@ ObjectListNode::~ObjectListNode() = default;
     const Dependency * const end = m_DynamicDependencies.End();
     for ( const Dependency * it = m_DynamicDependencies.Begin(); it != end; ++it )
     {
-        ObjectNode * on = it->GetNode()->CastTo< ObjectNode >();
-        timeStamp = Math::Max< uint64_t >( timeStamp, on->GetStamp() );
+        timeStamp = Math::Max< uint64_t >( timeStamp, it->GetNode()->GetStamp() );
     }
     m_Stamp = timeStamp;
 
@@ -466,27 +472,31 @@ void ObjectListNode::GetInputFiles( Args & fullArgs, const AString & pre, const 
         const Node * n = i->GetNode();
 
         // handle pch files - get path to object
-        if ( n->GetType() == Node::OBJECT_NODE )
+        if ( n->GetType() == Node::FILE_NODE )
         {
-            // handle pch files - get path to matching object
-            const ObjectNode * on = n->CastTo< ObjectNode >();
-            if ( on->IsCreatingPCH() )
-            {
-                if ( on->IsMSVC() )
-                {
-                    fullArgs += pre;
-                    fullArgs += on->GetName();
-                    fullArgs += on->GetObjExtension();
-                    fullArgs += post;
-                    fullArgs.AddDelimiter();
-                    continue;
-                }
-                else
-                {
-                    // Clang/GCC/SNC don't have an object to link for a pch
-                    continue;
-                }
-            }
+			const FileNode* fileNode = n->CastTo<const FileNode>();
+			if( fileNode->GetCreator() && fileNode->GetCreator()->GetType() == Node::OBJECT_NODE )
+			{
+				// handle pch files - get path to matching object
+				const ObjectNode * on = fileNode->GetCreator()->CastTo< ObjectNode >();
+				if( on->IsCreatingPCH() )
+				{
+					if( on->IsMSVC() )
+					{
+						fullArgs += pre;
+						fullArgs += fileNode->GetName();
+						fullArgs += on->GetObjExtension();
+						fullArgs += post;
+						fullArgs.AddDelimiter();
+						continue;
+					}
+					else
+					{
+						// Clang/GCC/SNC don't have an object to link for a pch
+						continue;
+					}
+				}
+			}
         }
 
         // extract objects from additional lists
@@ -610,59 +620,94 @@ bool ObjectListNode::CreateDynamicObjectNode( NodeGraph & nodeGraph, Node * inpu
     objFile += fileNameOnly;
     objFile += GetObjExtension();
 
-    // Create an ObjectNode to compile the above file
-    // and depend on that
-    Node * on = nodeGraph.FindNode( objFile );
-    if ( on == nullptr )
-    {
-        // determine flags - TODO:B Move DetermineFlags call out of build-time
-        const bool usingPCH = ( m_PCHInputFile.IsEmpty() == false );
-        uint32_t flags = ObjectNode::DetermineFlags( GetCompiler(), m_CompilerOptions, false, usingPCH );
-        if ( isUnityNode )
-        {
-            flags |= ObjectNode::FLAG_UNITY;
-        }
-        if ( isIsolatedFromUnityNode )
-        {
-            flags |= ObjectNode::FLAG_ISOLATED_FROM_UNITY;
-        }
-        uint32_t preprocessorFlags = 0;
-        if ( m_Preprocessor.IsEmpty() == false )
-        {
-            // determine flags - TODO:B Move DetermineFlags call out of build-time
-            preprocessorFlags = ObjectNode::DetermineFlags( GetPreprocessor(), m_PreprocessorOptions, false, usingPCH );
-        }
+	AStackString<> objNodeName( objFile );
+	objNodeName += "?Object?";
 
-        BFFIterator dummyIter;
-        ObjectNode * objectNode = CreateObjectNode( nodeGraph, dummyIter, nullptr, flags, preprocessorFlags, m_CompilerOptions, m_CompilerOptionsDeoptimized, m_Preprocessor, m_PreprocessorOptions, objFile, inputFile->GetName(), AString::GetEmpty() );
-        if ( !objectNode )
-        {
-            FLOG_ERROR( "Failed to create node '%s'!", objFile.Get() );
-            return false;
-        }
-        on = objectNode;
-    }
-    else if ( on->GetType() != Node::OBJECT_NODE )
-    {
-        FLOG_ERROR( "Node '%s' is not an ObjectNode (type: %s)", on->GetName().Get(), on->GetTypeName() );
-        return false;
-    }
-    else
-    {
-        ObjectNode * other = on->CastTo< ObjectNode >();
-        if ( inputFile != other->GetSourceFile() )
-        {
-            FLOG_ERROR( "Conflicting objects found:\n"
-                        " File A: %s\n"
-                        " File B: %s\n"
-                        " Both compile to: %s\n",
-                        inputFile->GetName().Get(),
-                        other->GetSourceFile()->GetName().Get(),
-                        objFile.Get() );
-            return false;
-        }
-    }
-    m_DynamicDependencies.Append( Dependency( on ) );
+
+	ObjectNode* objectNode = nullptr;
+	Node* objNode = nodeGraph.FindNode( objNodeName );
+	if( objNode == nullptr )
+	{
+		// determine flags - TODO:B Move DetermineFlags call out of build-time
+		const bool usingPCH = (m_PCHInputFile.IsEmpty() == false);
+		uint32_t flags = ObjectNode::DetermineFlags( GetCompiler(), m_CompilerOptions, false, usingPCH );
+		if( isUnityNode )
+		{
+			flags |= ObjectNode::FLAG_UNITY;
+		}
+		if( isIsolatedFromUnityNode )
+		{
+			flags |= ObjectNode::FLAG_ISOLATED_FROM_UNITY;
+		}
+		uint32_t preprocessorFlags = 0;
+		if( m_Preprocessor.IsEmpty() == false )
+		{
+			// determine flags - TODO:B Move DetermineFlags call out of build-time
+			preprocessorFlags = ObjectNode::DetermineFlags( GetPreprocessor(), m_PreprocessorOptions, false, usingPCH );
+		}
+
+		BFFIterator dummyIter;
+		objectNode = CreateObjectNode( nodeGraph, dummyIter, nullptr, flags, preprocessorFlags, m_CompilerOptions, m_CompilerOptionsDeoptimized, m_Preprocessor, m_PreprocessorOptions, objNodeName, objFile, inputFile->GetName(), AString::GetEmpty() );
+		if( !objectNode )
+		{
+			FLOG_ERROR( "Failed to create node '%s'!", objFile.Get() );
+			return false;
+		}
+		objNode = objectNode;
+	}
+	else if( objNode->GetType() != Node::OBJECT_NODE )
+	{
+		FLOG_ERROR( "Node '%s' is not a ObjectNode (type: %s)", objNode->GetName().Get(), objNode->GetTypeName() );
+		return false;
+	}
+	else
+	{
+		ObjectNode* otherObjectNode = objNode->CastTo<ObjectNode>();
+		if( inputFile != otherObjectNode->GetSourceFile() )
+		{
+			FLOG_ERROR( "Conflicting objects found:\n"
+				" File A: %s\n"
+				" File B: %s\n"
+				" Both compile to: %s\n",
+				inputFile->GetName().Get(),
+				otherObjectNode->GetSourceFile()->GetName().Get(),
+				objFile.Get() );
+			return false;
+		}
+
+		// TODO: Consider checking all object properties
+		if( m_CompilerOptions != otherObjectNode->m_CompilerOptions )
+		{
+			FLOG_ERROR( "Conflicting CompilerOptions found:\n"
+				" CompilerOptions A: %s\n"
+				" CompilerOptions B: %s\n"
+				" Both compile to: %s\n",
+				m_CompilerOptions.Get(),
+				otherObjectNode->m_CompilerOptions.Get(),
+				objFile.Get() );
+			return false;
+		}
+
+		objectNode = objNode->CastTo<ObjectNode>();
+	}
+
+	Node* targetNode = nullptr;
+	if( !m_TargetOutputExtension.IsEmpty() || !m_TargetOutputPrefix.IsEmpty() )
+	{
+		AStackString<> targetFile;
+		targetFile.Assign( m_CompilerOutputPath );
+		targetFile += subPath;
+		targetFile += m_TargetOutputPrefix;
+		targetFile += fileNameOnly;
+		targetFile += m_TargetOutputExtension;
+		targetNode = AppendObjectOutputFile( nodeGraph, *objectNode, targetFile );
+	}
+	else
+	{
+		targetNode = objectNode->GetPrimaryOutputFile();
+	}
+	
+    m_DynamicDependencies.Append( Dependency( targetNode ) );
     return true;
 }
 
@@ -677,11 +722,12 @@ ObjectNode * ObjectListNode::CreateObjectNode( NodeGraph & nodeGraph,
                                                const AString & compilerOptionsDeoptimized,
                                                const AString & preprocessor,
                                                const AString & preprocessorOptions,
-                                               const AString & objectName,
+                                               const AString & objectNodeName,
+                                               const AString & primaryObjectName,
                                                const AString & objectInput,
                                                const AString & pchObjectName )
 {
-    ObjectNode * node= nodeGraph.CreateObjectNode( objectName );
+    ObjectNode * node= nodeGraph.CreateObjectNode( objectNodeName );
     node->m_Compiler = m_Compiler;
     node->m_CompilerOptions = compilerOptions;
     node->m_CompilerOptionsDeoptimized = compilerOptionsDeoptimized;
@@ -703,28 +749,94 @@ ObjectNode * ObjectListNode::CreateObjectNode( NodeGraph & nodeGraph,
     node->m_AllowCaching = m_AllowCaching;
     node->m_CompilerForceUsing = m_CompilerForceUsing;
     node->m_PreBuildDependencyNames = m_PreBuildDependencyNames;
-    node->m_PrecompiledHeader = m_UsingPrecompiledHeader ? GetPrecompiledHeader()->GetName() : AString::GetEmpty();
+    node->m_PrecompiledHeader = m_UsingPrecompiledHeader ? GetPrecompiledHeaderFileNode()->GetName() : AString::GetEmpty();
     node->m_Preprocessor = preprocessor;
     node->m_PreprocessorOptions = preprocessorOptions;
     node->m_Flags = flags;
     node->m_PreprocessorFlags = preprocessorFlags;
+
+	// Find or create the primary output file node
+	ASSERT( node->m_OutputFiles.IsEmpty() );
+	AppendObjectOutputFile( nodeGraph, *node, primaryObjectName );
 
     if ( !node->Initialize( nodeGraph, iter, function ) )
     {
         // TODO:A We have a node in the graph which is in an invalid state
         return nullptr; // Initialize will have emitted an error
     }
+
     return node;
 }
 
-// GetPrecompiledHeader
+Node * ObjectListNode::AppendObjectOutputFile( NodeGraph & nodeGraph,
+                                               ObjectNode & objectNode, 
+                                               const AString& outputFileName )
+{
+	// If the file node is already listed as an output file, simply return it
+	Node* existingNode = objectNode.GetOutputFile( outputFileName );
+	if( existingNode )
+	{
+		return existingNode;
+	}
+
+	Node* targetNode = nodeGraph.FindNode( outputFileName );
+	if( targetNode == nullptr )
+	{
+		BFFIterator dummyIter;
+		FileNode* targetFileNode = nodeGraph.CreateFileNode( outputFileName );
+		targetFileNode->InitializeAsOutputFile( dummyIter, nullptr, objectNode );
+		objectNode.AppendOutputFile( targetFileNode );
+		targetNode = targetFileNode;
+	}
+	else if( targetNode->GetType() != Node::FILE_NODE )
+	{
+		FLOG_ERROR( "Node '%s' is not a FileNode (type: %s)", targetNode->GetName().Get(), targetNode->GetTypeName() );
+		return nullptr;
+	}
+	else
+	{
+		// Make sure that this file has us as a creator (or at least that it doesn't have a conflicting one)
+		FileNode* targetFileNode = targetNode->CastTo<FileNode>();
+		Node* fileCreator = targetFileNode->GetCreator();
+
+		if( fileCreator == nullptr )
+		{
+			BFFIterator dummyIter;
+			targetFileNode->InitializeAsOutputFile( dummyIter, nullptr, objectNode );
+			objectNode.AppendOutputFile( targetFileNode );
+		}
+		else if( fileCreator == &objectNode )
+		{
+			// This is ok. Do nothing
+		}
+		else
+		{
+			FLOG_ERROR( "Target node has mismatched creator. expected='%s' found='%s'!", objectNode.GetName().Get(), fileCreator->GetName().Get() );
+			return nullptr;
+		}
+	}
+
+	return targetNode;
+}
+
+// GetPrecompiledHeaderFileNode
 //------------------------------------------------------------------------------
-ObjectNode * ObjectListNode::GetPrecompiledHeader() const
+FileNode * ObjectListNode::GetPrecompiledHeaderFileNode() const
 {
     ASSERT( m_UsingPrecompiledHeader );
     // Precompiled header stored just before inputs
-    return m_StaticDependencies[ m_ObjectListInputStartIndex - 1 ].GetNode()->CastTo< ObjectNode >();
+    return m_StaticDependencies[ m_ObjectListInputStartIndex - 1 ].GetNode()->CastTo< FileNode >();
 }
+
+// GetPrecompiledHeaderObjectNode
+//------------------------------------------------------------------------------
+ObjectNode * ObjectListNode::GetPrecompiledHeaderObjectNode() const
+{
+	ASSERT( m_UsingPrecompiledHeader );
+	FileNode* fileNode = GetPrecompiledHeaderFileNode();
+	return fileNode->GetCreator()->CastTo< ObjectNode >();
+}
+
 
 // GetObjExtension
 //------------------------------------------------------------------------------

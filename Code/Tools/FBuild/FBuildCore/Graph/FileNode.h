@@ -20,7 +20,12 @@ public:
     virtual bool IsAFile() const override { return true; }
 
     static void HandleWarningsMSVC( Job * job, const AString & name, const char * data, uint32_t dataSize );
+
+	void InitializeAsOutputFile( const BFFIterator & funcStartIter, const Function * function, Node & creator );
+
+	inline Node* GetCreator() const { return m_StaticDependencies.GetSize() == 0 ? nullptr : m_StaticDependencies[0].GetNode(); }
 protected:
+	virtual void PostLoad( NodeGraph & nodeGraph ) override;
     virtual BuildResult DoBuild( Job * job ) override;
 
     static void DumpOutput( Job * job, const char * data, uint32_t dataSize, const AString & name, bool treatAsWarnings = false );

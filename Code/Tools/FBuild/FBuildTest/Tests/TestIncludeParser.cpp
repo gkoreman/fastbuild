@@ -177,10 +177,10 @@ void TestIncludeParser::TestMSVC_P() const
     // Check stats
     //               Seen,  Built,  Type
     CheckStatsNode ( 1,     1,      Node::OBJECT_LIST_NODE );
-    CheckStatsNode ( 1,     1,      Node::FILE_NODE );
+    CheckStatsNode ( 2,     2,      Node::FILE_NODE );			// 1 .i + 1 .obj
     CheckStatsNode ( 1,     1,      Node::COMPILER_NODE );
     CheckStatsNode ( 1,     1,      Node::OBJECT_NODE );
-    CheckStatsTotal( 4,     4 );
+    CheckStatsTotal( 5,     5 );
 }
 
 // TestMSVC_ShowIncludesWithWarnings

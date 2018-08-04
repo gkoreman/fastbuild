@@ -757,7 +757,6 @@ LibraryNode * NodeGraph::CreateLibraryNode( const AString & libraryName )
 ObjectNode * NodeGraph::CreateObjectNode( const AString & objectName )
 {
     ASSERT( Thread::IsMainThread() );
-    ASSERT( IsCleanPath( objectName ) );
 
     ObjectNode * node = FNEW( ObjectNode() );
     node->SetName( objectName );

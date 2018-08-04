@@ -58,7 +58,7 @@ REFLECT_NODE_BEGIN( ObjectNode, Node, MetaNone() )
     REFLECT( m_AllowDistribution,                   "AllowDistribution",                MetaOptional() )
     REFLECT( m_AllowCaching,                        "AllowCaching",                     MetaOptional() )
     REFLECT_ARRAY( m_CompilerForceUsing,            "CompilerForceUsing",               MetaOptional() + MetaFile() )
-
+	
     // Preprocessor
     REFLECT( m_Preprocessor,                        "Preprocessor",                     MetaOptional() + MetaFile() + MetaAllowNonFile())
     REFLECT( m_PreprocessorOptions,                 "PreprocessorOptions",              MetaOptional() )
@@ -148,11 +148,11 @@ ObjectNode::ObjectNode()
 
 // CONSTRUCTOR (Remote)
 //------------------------------------------------------------------------------
-ObjectNode::ObjectNode( const AString & objectName,
-                        NodeProxy * srcFile,
+ObjectNode::ObjectNode( NodeProxy * srcFile,
+						const Dependencies& outputFiles,
                         const AString & compilerOptions,
                         uint32_t flags )
-: FileNode( objectName, Node::FLAG_NONE )
+: FileNode( AStackString<>("?RemoteObjectNode?"), Node::FLAG_NONE )
 , m_CompilerOptions( compilerOptions )
 , m_Flags( flags )
 , m_Remote( true )
@@ -163,18 +163,27 @@ ObjectNode::ObjectNode( const AString & objectName,
     m_StaticDependencies.SetCapacity( 2 );
     m_StaticDependencies.Append( Dependency( nullptr ) );
     m_StaticDependencies.Append( Dependency( srcFile ) );
+
+	m_OutputFiles.SetCapacity( outputFiles.GetSize() );
+	m_OutputFiles.Append( outputFiles );
 }
 
 // DESTRUCTOR
 //------------------------------------------------------------------------------
 ObjectNode::~ObjectNode()
 {
-    // remote worker owns the ProxyNode for the source file, so must free it
+    // remote worker owns the ProxyNode for the source file and output files, so must free them
     if ( m_Remote )
     {
         Node * srcFile = GetSourceFile();
         ASSERT( srcFile->GetType() == Node::PROXY_NODE );
         FDELETE srcFile;
+
+		for( const Dependency& outFile : m_OutputFiles )
+		{
+			ASSERT( outFile.GetNode()->GetType() == Node::PROXY_NODE );
+			FDELETE outFile.GetNode();
+		}
     }
 }
 
@@ -212,14 +221,17 @@ ObjectNode::~ObjectNode()
     // Delete previous file(s) if doing a clean build
     if ( FBuild::Get().GetOptions().m_ForceCleanBuild )
     {
-        if ( FileIO::FileExists( GetName().Get() ) )
-        {
-            if ( FileIO::FileDelete( GetName().Get() ) == false )
-            {
-                FLOG_ERROR( "Failed to delete file before build '%s'", GetName().Get() );
-                return NODE_RESULT_FAILED;
-            }
-        }
+		for( const Dependency& outputFile : m_OutputFiles )
+		{
+			if( FileIO::FileExists( outputFile.GetNode()->GetName().Get() ) )
+			{
+				if( FileIO::FileDelete( outputFile.GetNode()->GetName().Get() ) == false )
+				{
+					FLOG_ERROR( "Failed to delete file before build '%s'", outputFile.GetNode()->GetName().Get() );
+					return NODE_RESULT_FAILED;
+				}
+			}
+		}
         if ( GetFlag( FLAG_MSVC ) && GetFlag( FLAG_CREATING_PCH ) )
         {
             if ( FileIO::FileExists( m_PCHObjectFileName.Get() ) )
@@ -330,7 +342,7 @@ ObjectNode::~ObjectNode()
 
     // spawn the process
     CompileHelper ch;
-    if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) ) // use response file for MSVC
+    if ( !ch.SpawnCompiler( job, GetPrimaryOutputFile()->GetName(), GetCompiler()->GetExecutable(), fullArgs ) ) // use response file for MSVC
     {
         return NODE_RESULT_FAILED; // SpawnCompiler has logged error
     }
@@ -340,7 +352,7 @@ ObjectNode::~ObjectNode()
     // (since compilation will fail anyway, and the output will be shown)
     if ( ( ch.GetResult() == 0 ) && !GetFlag( FLAG_WARNINGS_AS_ERRORS_MSVC ) )
     {
-        HandleWarningsMSVC( job, GetName(), ch.GetOut().Get(), ch.GetOutSize() );
+        HandleWarningsMSVC( job, GetPrimaryOutputFile()->GetName(), ch.GetOut().Get(), ch.GetOutSize() );
     }
 
     const char *output = nullptr;
@@ -366,7 +378,7 @@ ObjectNode::~ObjectNode()
     }
 
     // record new file time
-    m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+    m_Stamp = FileIO::GetFileLastWriteTime( GetPrimaryOutputFile()->GetName() );
 
     return NODE_RESULT_OK;
 }
@@ -557,7 +569,7 @@ Node::BuildResult ObjectNode::DoBuildWithPreProcessor2( Job * job, bool useDeopt
     // record new file time
     if ( job->IsLocal() )
     {
-        m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+        m_Stamp = FileIO::GetFileLastWriteTime( GetPrimaryOutputFile()->GetName() );
 
         const bool useCache = ShouldUseCache();
         if ( m_Stamp && useCache )
@@ -588,7 +600,7 @@ Node::BuildResult ObjectNode::DoBuild_QtRCC( Job * job )
         EmitCompilationMessage( fullArgs, false );
 
         CompileHelper ch;
-        if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) )
+        if ( !ch.SpawnCompiler( job, GetFriendlyName(), GetCompiler()->GetExecutable(), fullArgs ) )
         {
             return NODE_RESULT_FAILED; // compile has logged error
         }
@@ -630,14 +642,14 @@ Node::BuildResult ObjectNode::DoBuild_QtRCC( Job * job )
         }
 
         CompileHelper ch;
-        if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) )
+        if ( !ch.SpawnCompiler( job, GetFriendlyName(), GetCompiler()->GetExecutable(), fullArgs ) )
         {
             return NODE_RESULT_FAILED; // compile has logged error
         }
     }
 
     // record new file time
-    m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+    m_Stamp = FileIO::GetFileLastWriteTime( GetPrimaryOutputFile()->GetName() );
 
     return NODE_RESULT_OK;
 }
@@ -659,13 +671,13 @@ Node::BuildResult ObjectNode::DoBuild_QtRCC( Job * job )
 
     // spawn the process
     CompileHelper ch;
-    if ( !ch.SpawnCompiler( job, GetName(), GetCompiler()->GetExecutable(), fullArgs ) )
+    if ( !ch.SpawnCompiler( job, GetFriendlyName(), GetCompiler()->GetExecutable(), fullArgs ) )
     {
         return NODE_RESULT_FAILED; // compile has logged error
     }
 
     // record new file time
-    m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+    m_Stamp = FileIO::GetFileLastWriteTime( GetPrimaryOutputFile()->GetName() );
 
     return NODE_RESULT_OK;
 }
@@ -683,7 +695,7 @@ bool ObjectNode::ProcessIncludesMSCL( const char * output, uint32_t outputSize )
 
         if ( result == false )
         {
-            FLOG_ERROR( "Failed to process includes for '%s'", GetName().Get() );
+            FLOG_ERROR( "Failed to process includes for '%s'", GetFriendlyName().Get() );
             return false;
         }
 
@@ -737,7 +749,7 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
                                 : parser.ParseGCC_Preprocessed( output, outputSize );
         if ( result == false )
         {
-            FLOG_ERROR( "Failed to process includes for '%s'", GetName().Get() );
+            FLOG_ERROR( "Failed to process includes for '%s'", GetFriendlyName().Get() );
             return false;
         }
 
@@ -757,12 +769,12 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
 //------------------------------------------------------------------------------
 /*static*/ Node * ObjectNode::LoadRemote( IOStream & stream )
 {
-    AStackString<> name; 
     AStackString<> sourceFile; 
     uint32_t flags; 
     AStackString<> compilerArgs; 
-    if ( ( stream.Read( name ) == false ) ||
-         ( stream.Read( sourceFile ) == false ) ||
+	Array<AString> outputFileNames;
+    if ( ( stream.Read( sourceFile ) == false ) ||
+         ( stream.Read( outputFileNames ) == false ) ||
          ( stream.Read( flags ) == false ) ||
          ( stream.Read( compilerArgs ) == false ) )
     {
@@ -770,8 +782,13 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     }
 
     NodeProxy * srcFile = FNEW( NodeProxy( sourceFile ) );
+	Dependencies outputFileNodes( outputFileNames.GetSize(), false );
+	for( const AString& outputFileName : outputFileNames )
+	{
+		outputFileNodes.Append( Dependency( FNEW( NodeProxy( outputFileName ) ) ) );
+	}
 
-    return FNEW( ObjectNode( name, srcFile, compilerArgs, flags ) );
+    return FNEW( ObjectNode( srcFile, outputFileNodes, compilerArgs, flags ) );
 }
 
 // DetermineFlags
@@ -965,9 +982,25 @@ bool ObjectNode::ProcessIncludesWithPreProcessor( Job * job )
     // Force using implies /clr which is not distributable
     ASSERT( m_CompilerForceUsing.IsEmpty() );
 
+	Array<AString> outputFileNames( m_OutputFiles.GetSize() + (IsUsingPDB() ? 1 : 0), false );
+	for( const Dependency& file : m_OutputFiles )
+	{
+		outputFileNames.Append( file.GetNode()->GetName() );
+	}
+
+	// Fake an additional output file so that we can get the remotely generated PDB back.
+	// The PDB is copied back from the remote agent as if it were a regular output file
+	// but is intercepted in Client::Process and written back to disk.
+	if( IsUsingPDB() )
+	{
+		AStackString<> pdbName;
+		GetPDBName( pdbName );
+		outputFileNames.Append( pdbName );
+	}
+
     // Save minimal information for the remote worker
-    stream.Write( m_Name );
-    stream.Write( GetSourceFile()->GetName() );
+	stream.Write( GetSourceFile()->GetName() );
+	stream.Write( outputFileNames );
     stream.Write( m_Flags );
 
     // TODO:B would be nice to make ShouldUseDeoptimization cache the result for this build
@@ -1013,7 +1046,8 @@ CompilerNode * ObjectNode::GetDedicatedPreprocessor() const
 ObjectNode * ObjectNode::GetPrecompiledHeader() const
 {
     ASSERT( m_PrecompiledHeader.IsEmpty() == false );
-    return m_StaticDependencies[ 2 ].GetNode()->CastTo< ObjectNode >();
+	FileNode* precompiledHeaderFileNode = m_StaticDependencies[2].GetNode()->CastTo< FileNode >();
+    return precompiledHeaderFileNode->GetCreator()->CastTo< ObjectNode >();
 }
 
 // GetPDBName
@@ -1021,7 +1055,7 @@ ObjectNode * ObjectNode::GetPrecompiledHeader() const
 void ObjectNode::GetPDBName( AString & pdbName ) const
 {
     ASSERT( IsUsingPDB() );
-    pdbName = m_Name;
+    pdbName = GetPrimaryOutputFile()->GetName();
     pdbName += ".pdb";
 }
 
@@ -1038,6 +1072,38 @@ const char * ObjectNode::GetObjExtension() const
         #endif
     }
     return m_CompilerOutputExtension.Get();
+}
+
+const AString& ObjectNode::GetFriendlyName() const
+{
+	return GetPrimaryOutputFile()->GetName();
+}
+
+// GetPrimaryOutputFile
+//------------------------------------------------------------------------------
+Node * ObjectNode::GetPrimaryOutputFile() const
+{
+	ASSERT( m_OutputFiles.GetSize() >= 1 );
+	return m_OutputFiles[0].GetNode();
+}
+
+// GetOutputFile
+//------------------------------------------------------------------------------
+Node * ObjectNode::GetOutputFile( const AString & name ) const
+{
+	for( const Dependency& n : m_OutputFiles )
+	{
+		if( n.GetNode()->GetName() == name )
+			return n.GetNode();
+	}
+	return nullptr;
+}
+
+// AppendOutputFile
+//------------------------------------------------------------------------------
+void ObjectNode::AppendOutputFile( Node* node )
+{ 
+	m_OutputFiles.Append( Dependency( node ) ); 
 }
 
 // GetCacheName
@@ -1129,9 +1195,12 @@ bool ObjectNode::RetrieveFromCache( Job * job )
 
             MultiBuffer buffer( data, dataSize );
 
-            Array< AString > fileNames( 4, false );
-            fileNames.Append( m_Name );
-
+            Array< AString > fileNames( 3 + m_OutputFiles.GetSize(), false );
+			for( const Dependency& outFile : m_OutputFiles )
+			{
+				fileNames.Append( outFile.GetNode()->GetName() );
+			}
+			
             GetExtraCacheFilePaths( job, fileNames );
 
             // Get current "system time" and convert to "file time"
@@ -1168,15 +1237,16 @@ bool ObjectNode::RetrieveFromCache( Job * job )
 
             cache->FreeMemory( cacheData, cacheDataSize );
 
-            FileIO::WorkAroundForWindowsFilePermissionProblem( m_Name );
-
+			
+			FileIO::WorkAroundForWindowsFilePermissionProblem( GetPrimaryOutputFile()->GetName() );
+			
             // the file time we set and local file system might have different
             // granularity for timekeeping, so we need to update with the actual time written
-            m_Stamp = FileIO::GetFileLastWriteTime( m_Name );
+            m_Stamp = FileIO::GetFileLastWriteTime( GetPrimaryOutputFile()->GetName() );
 
             // Output
             AStackString<> output;
-            output.Format( "Obj: %s <CACHE>\n", GetName().Get() );
+            output.Format( "Obj: %s <CACHE>\n", GetFriendlyName().Get() );
             if ( FBuild::Get().GetOptions().m_CacheVerbose )
             {
                 output.AppendFormat( " - Cache Hit: %u ms '%s'\n", uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
@@ -1200,7 +1270,7 @@ bool ObjectNode::RetrieveFromCache( Job * job )
     {
         FLOG_BUILD( "Obj: %s\n"
                     " - Cache Miss: %u ms '%s'\n",
-                    GetName().Get(), uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
+                    GetFriendlyName().Get(), uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
     }
 
     SetStatFlag( Node::STATS_CACHE_MISS );
@@ -1227,9 +1297,12 @@ void ObjectNode::WriteToCache( Job * job )
     ASSERT( cache );
     if ( cache )
     {
-        Array< AString > fileNames( 4, false );
-        fileNames.Append( m_Name );
-
+        Array< AString > fileNames( 3 + m_OutputFiles.GetSize(), false );
+		for( const Dependency& outFile : m_OutputFiles )
+		{
+			fileNames.Append( outFile.GetNode()->GetName() );
+		}
+		
         GetExtraCacheFilePaths( job, fileNames );
 
         MultiBuffer buffer;
@@ -1259,7 +1332,7 @@ void ObjectNode::WriteToCache( Job * job )
                     AStackString<> output;
                     output.Format( "Obj: %s\n"
                                    " - Cache Store: %u ms '%s'\n",
-                                   GetName().Get(), uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
+                                   GetFriendlyName().Get(), uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
                     if ( m_PCHCacheKey != 0 )
                     {
                         output.AppendFormat( " - PCH Key: %" PRIx64 "\n", m_PCHCacheKey );
@@ -1277,7 +1350,7 @@ void ObjectNode::WriteToCache( Job * job )
     {
         FLOG_BUILD( "Obj: %s\n"
                     " - Cache Store Fail: %u ms '%s'\n",
-                    GetName().Get(), uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
+                    GetFriendlyName().Get(), uint32_t( t.GetElapsedMS() ), cacheFileName.Get() );
     }
 }
 
@@ -1323,7 +1396,7 @@ void ObjectNode::GetExtraCacheFilePaths( const Job * job, Array< AString > & out
 
         // .nativecodeanalysis.xml (all files)
         // TODO:B The xml path can be manually specified with /analyze:log
-        AStackString<> xmlFileName( m_PCHObjectFileName.IsEmpty() ? m_Name : m_PCHObjectFileName );
+        AStackString<> xmlFileName( m_PCHObjectFileName.IsEmpty() ? GetPrimaryOutputFile()->GetName() : m_PCHObjectFileName );
         const char * extPos = xmlFileName.FindLast( '.' ); // Only last extension removed
         if ( extPos )
         {
@@ -1347,7 +1420,7 @@ void ObjectNode::EmitCompilationMessage( const Args & fullArgs, bool useDeoptimi
     {
         output += "**Deoptimized** ";
     }
-    output += GetName();
+    output += GetFriendlyName();
     if ( racingRemoteJob )
     {
         output += " <LOCAL RACE>";
@@ -1685,7 +1758,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
         if ( found )
         {
             fullArgs += AStackString<>( token.Get(), found );
-            fullArgs += m_Name;
+            fullArgs += GetFriendlyName();
             fullArgs += AStackString<>( found + 2, token.GetEnd() );
             fullArgs.AddDelimiter();
             continue;
@@ -1788,8 +1861,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
     }
 
     // Remote compilation writes to a temp pdb
-    if ( ( job->IsLocal() == false ) &&
-         ( job->GetNode()->CastTo< ObjectNode >()->IsUsingPDB() ) )
+    if ( ( job->IsLocal() == false ) && IsUsingPDB() )
     {
         AStackString<> pdbName, tmp;
         GetPDBName( pdbName );
@@ -1810,7 +1882,7 @@ bool ObjectNode::BuildArgs( const Job * job, Args & fullArgs, Pass pass, bool us
         job->GetToolManifest()->GetRemoteFilePath( 0, remoteCompiler );
     }
     const AString& compiler = job->IsLocal() ? GetCompiler()->GetExecutable() : remoteCompiler;
-    if ( fullArgs.Finalize( compiler, GetName(), CanUseResponseFile() ) == false )
+    if ( fullArgs.Finalize( compiler, GetFriendlyName(), CanUseResponseFile() ) == false )
     {
         return false; // Finalize will have emitted an error
     }
@@ -1845,7 +1917,7 @@ bool ObjectNode::BuildPreprocessedOutput( const Args & fullArgs, Job * job, bool
     // spawn the process
     CompileHelper ch( false ); // don't handle output (we'll do that)
     // TODO:A Add checks in BuildArgs for length of dedicated preprocessor
-    if ( !ch.SpawnCompiler( job, GetName(),
+    if ( !ch.SpawnCompiler( job, GetFriendlyName(),
          useDedicatedPreprocessor ? GetDedicatedPreprocessor()->GetExecutable() : GetCompiler()->GetExecutable(),
          fullArgs ) )
     {
@@ -1859,11 +1931,11 @@ bool ObjectNode::BuildPreprocessedOutput( const Args & fullArgs, Job * job, bool
             // Use the error text, but if it's empty, use the output
             if ( ch.GetErr().Get() )
             {
-                DumpOutput( job, ch.GetErr().Get(), ch.GetErrSize(), GetName() );
+                DumpOutput( job, ch.GetErr().Get(), ch.GetErrSize(), GetFriendlyName() );
             }
             else
             {
-                DumpOutput( job, ch.GetOut().Get(), ch.GetOutSize(), GetName() );
+                DumpOutput( job, ch.GetOut().Get(), ch.GetOutSize(), GetFriendlyName() );
             }
         }
 
@@ -2051,7 +2123,7 @@ bool ObjectNode::WriteTmpFile( Job * job, AString & tmpDirectory, AString & tmpF
     tmpDirectory.AppendFormat( "%08X%c", sourceNameHash, NATIVE_SLASH );
     if ( FileIO::DirectoryCreate( tmpDirectory ) == false )
     {
-        job->Error( "Failed to create temp directory '%s' to build '%s' (error %u)", tmpDirectory.Get(), GetName().Get(), Env::GetLastErr() );
+        job->Error( "Failed to create temp directory '%s' to build '%s' (error %u)", tmpDirectory.Get(), GetFriendlyName().Get(), Env::GetLastErr() );
         job->OnSystemError();
         return NODE_RESULT_FAILED;
     }
@@ -2064,14 +2136,14 @@ bool ObjectNode::WriteTmpFile( Job * job, AString & tmpDirectory, AString & tmpF
         // Try again
         if ( WorkerThread::CreateTempFile( tmpFileName, tmpFile ) == false )
         {
-            job->Error( "Failed to create temp file '%s' to build '%s' (error %u)", tmpFileName.Get(), GetName().Get(), Env::GetLastErr() );
+            job->Error( "Failed to create temp file '%s' to build '%s' (error %u)", tmpFileName.Get(), GetFriendlyName().Get(), Env::GetLastErr() );
             job->OnSystemError();
             return NODE_RESULT_FAILED;
         }
     }
     if ( tmpFile.Write( dataToWrite, dataToWriteSize ) != dataToWriteSize )
     {
-        job->Error( "Failed to write to temp file '%s' to build '%s' (error %u)", tmpFileName.Get(), GetName().Get(), Env::GetLastErr() );
+        job->Error( "Failed to write to temp file '%s' to build '%s' (error %u)", tmpFileName.Get(), GetFriendlyName().Get(), Env::GetLastErr() );
         job->OnSystemError();
         return NODE_RESULT_FAILED;
     }
@@ -2109,7 +2181,7 @@ bool ObjectNode::BuildFinalOutput( Job * job, const Args & fullArgs ) const
 
     // spawn the process
     CompileHelper ch( true, job->GetAbortFlagPointer() );
-    if ( !ch.SpawnCompiler( job, GetName(), compiler, fullArgs, workingDir.IsEmpty() ? nullptr : workingDir.Get() ) )
+    if ( !ch.SpawnCompiler( job, GetFriendlyName(), compiler, fullArgs, workingDir.IsEmpty() ? nullptr : workingDir.Get() ) )
     {
         // did spawn fail, or did we spawn and fail to compile?
         if ( ch.GetResult() != 0 )
@@ -2133,7 +2205,7 @@ bool ObjectNode::BuildFinalOutput( Job * job, const Args & fullArgs ) const
         // Handle MSCL warnings if not already a failure
         if ( IsMSVC() && ( ch.GetResult() == 0 ) && !GetFlag( FLAG_WARNINGS_AS_ERRORS_MSVC ))
         {
-            HandleWarningsMSVC( job, GetName(), ch.GetOut().Get(), ch.GetOutSize() );
+            HandleWarningsMSVC( job, GetFriendlyName(), ch.GetOut().Get(), ch.GetOutSize() );
         }
     }
 

@@ -57,10 +57,17 @@ protected:
                                    const AString & compilerOptionsDeoptimized,
                                    const AString & preprocessor,
                                    const AString & preprocessorOptions,
-                                   const AString & objectName,
+                                   const AString & objectNodeName,
+                                   const AString & primaryObjectName,
                                    const AString & objectInput,
                                    const AString & pchObjectName );
-    ObjectNode * GetPrecompiledHeader() const;
+	
+    Node * AppendObjectOutputFile( NodeGraph & nodeGraph,
+                                   ObjectNode & objectNode, 
+                                   const AString& outputFileName );
+
+    FileNode * GetPrecompiledHeaderFileNode() const;
+	ObjectNode * GetPrecompiledHeaderObjectNode() const;
 
     // Exposed Properties
     AString             m_Compiler;
@@ -90,6 +97,9 @@ protected:
     AString             m_Preprocessor;
     AString             m_PreprocessorOptions;
     Array< AString >    m_PreBuildDependencyNames;
+	AString             m_TargetOutputPrefix;
+	AString             m_TargetOutputExtension;
+
 
     // Internal State
     bool                m_UsingPrecompiledHeader            = false;

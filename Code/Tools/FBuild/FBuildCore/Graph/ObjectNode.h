@@ -29,8 +29,8 @@ public:
     ObjectNode();
     virtual bool Initialize( NodeGraph & nodeGraph, const BFFIterator & iter, const Function * function ) override;
     // simplified remote constructor
-    explicit ObjectNode( const AString & objectName,
-                         NodeProxy * srcFile,
+    explicit ObjectNode( NodeProxy * srcFile,
+                         const Dependencies& outputFiles,
                          const AString & compilerOptions,
                          uint32_t flags );
     virtual ~ObjectNode();
@@ -74,6 +74,7 @@ public:
     inline bool IsMSVC() const { return GetFlag( FLAG_MSVC ); }
     inline bool IsUsingPDB() const { return GetFlag( FLAG_USING_PDB ); }
 
+
     virtual void SaveRemote( IOStream & stream ) const override;
     static Node * LoadRemote( IOStream & stream );
 
@@ -88,6 +89,12 @@ public:
     void GetPDBName( AString & pdbName ) const;
 
     const char * GetObjExtension() const;
+
+	const AString& GetFriendlyName() const;
+	Node * GetPrimaryOutputFile() const;
+	Node * GetOutputFile( const AString & name ) const;
+	inline const Dependencies& GetOutputFiles() const { return m_OutputFiles; }
+	void AppendOutputFile( Node* n );
 private:
     virtual bool DoDynamicDependencies( NodeGraph & nodeGraph, bool forceClean ) override;
     virtual BuildResult DoBuild( Job * job ) override;
@@ -187,12 +194,13 @@ private:
     AString             m_Preprocessor;
     AString             m_PreprocessorOptions;
     Array< AString >    m_PreBuildDependencyNames;
-
+	
     // Internal State
     AString             m_PrecompiledHeader;
     uint32_t            m_Flags                             = 0;
     uint32_t            m_PreprocessorFlags                 = 0;
     uint64_t            m_PCHCacheKey                       = 0;
+	Dependencies		m_OutputFiles;
 
     // Not serialized
     Array< AString >    m_Includes;

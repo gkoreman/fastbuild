@@ -1,0 +1,99 @@
+// Use the standard test environment
+//------------------------------------------------------------------------------
+#include "../testcommon.bff"
+Using( .StandardEnvironment )
+Settings {}
+
+
+// A simple compiler that creates multiple outputs
+//--------------------
+ObjectList( "Compiler-Lib" )
+{
+    .CompilerInputFiles = "Tools/FBuild/FBuildTest/Data/TestMultipleOutputs/SimpleMultiOutputCompiler.cpp"
+    .CompilerOutputPath = "$Out$/Test/MultipleOutputs/"
+}
+
+Executable( "Compiler-Exe" )
+{
+    #if __WINDOWS__
+        .LinkerOptions      + ' /SUBSYSTEM:CONSOLE'
+                            + ' kernel32.lib'
+                            + .CRTLibs_Static
+    #endif
+    .LinkerOutput       = '$Out$/Test/MultipleOutputs/SimpleMultiOutputCompiler.exe'
+    .Libraries          = { "Compiler-Lib" }
+}
+
+Compiler( "SimpleCompiler" )
+{
+    .Executable = "Compiler-Exe"
+    .CompilerFamily = "custom"
+}
+
+// A simple exe
+//--------------------
+ObjectList( "ObjectList-obj" )
+{
+    .Compiler           = 'SimpleCompiler'
+    .CompilerOptions    = '%1 %2 aaa bbb'
+    .CompilerInputFiles = "Tools/FBuild/FBuildTest/Data/TestMultipleOutputs/a.cpp"
+    .CompilerOutputPath = "$Out$/Test/MultipleOutputs/"
+}
+
+ObjectList( "ObjectList-aaa" )
+{
+    .Compiler           = 'SimpleCompiler'
+    .CompilerOptions    = '%1 %2 aaa bbb'
+    .CompilerInputFiles = "Tools/FBuild/FBuildTest/Data/TestMultipleOutputs/a.cpp"
+    .CompilerOutputPath = "$Out$/Test/MultipleOutputs/"
+	.TargetOutputExtension = ".aaa"
+}
+
+ObjectList( "ObjectList-bbb" )
+{
+    .Compiler           = 'SimpleCompiler'
+    .CompilerOptions    = '%1 %2 aaa bbb'
+    .CompilerInputFiles = "Tools/FBuild/FBuildTest/Data/TestMultipleOutputs/a.cpp"
+    .CompilerOutputPath = "$Out$/Test/MultipleOutputs/"
+	.TargetOutputExtension = ".bbb"
+}
+
+Alias( 'All' )
+{
+	.Targets = {'ObjectList-obj' 'ObjectList-aaa' 'ObjectList-bbb' }
+}
+
+
+////////////////////////////////
+// ConflictingCompilerOptions
+
+ObjectList( "ObjectList-ccc" )
+{
+    .Compiler           = 'SimpleCompiler'
+    .CompilerOptions    = '%1 %2 aaa ccc'
+    .CompilerInputFiles = "Tools/FBuild/FBuildTest/Data/TestMultipleOutputs/a.cpp"
+    .CompilerOutputPath = "$Out$/Test/MultipleOutputs/"
+	.TargetOutputExtension = ".ccc"
+}
+
+Alias( 'ConflictingCompilerOptions' )
+{
+	.Targets = {'ObjectList-obj' 'ObjectList-ccc' }
+}
+
+
+/////////////////////////////////
+// Depending on Non-Primary Outputs
+
+Library( "Lib" )
+{
+    .Compiler           = 'SimpleCompiler'
+    .CompilerOptions    = '%1 %2 aaa bbb'
+    .CompilerInputFiles = "Tools/FBuild/FBuildTest/Data/TestMultipleOutputs/a.cpp"
+    .CompilerOutputPath = "$Out$/Test/MultipleOutputs/"
+	.TargetOutputExtension = ".bbb"
+
+	.Librarian          = 'SimpleLinker'
+	.LibrarianOutput    = '$Out$/Test/MultipleOutputs/link.txt'
+	.LibrarianOptions   = '%2 %1'
+}

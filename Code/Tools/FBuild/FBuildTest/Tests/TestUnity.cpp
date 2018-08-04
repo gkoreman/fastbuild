@@ -166,12 +166,12 @@ void TestUnity::TestCompile() const
     #endif
     CheckStatsNode ( stats, 1,      1,      Node::DIRECTORY_LIST_NODE );
     CheckStatsNode ( stats, 1,      1,      Node::UNITY_NODE );
-    CheckStatsNode ( stats, numF,   4,      Node::FILE_NODE ); // pch + 2x generated unity files built
+    CheckStatsNode ( stats, 3+numF, 7,      Node::FILE_NODE ); // pch + 2x generated unity files built
     CheckStatsNode ( stats, 1,      1,      Node::COMPILER_NODE );
     CheckStatsNode ( stats, 3,      3,      Node::OBJECT_NODE );
     CheckStatsNode ( stats, 1,      1,      Node::LIBRARY_NODE );
     CheckStatsNode ( stats, 1,      1,      Node::ALIAS_NODE );
-    CheckStatsTotal( stats, 8+numF, 12 );
+    CheckStatsTotal( stats, 11+numF, 15 );
 }
 
 // TestCompile_NoRebuild
@@ -188,12 +188,12 @@ void TestUnity::TestCompile_NoRebuild() const
     #endif
     CheckStatsNode ( stats, 1,      1,      Node::DIRECTORY_LIST_NODE );
     CheckStatsNode ( stats, 1,      1,      Node::UNITY_NODE );
-    CheckStatsNode ( stats, numF,   numF,   Node::FILE_NODE );
+    CheckStatsNode ( stats, 3+numF, 3+numF, Node::FILE_NODE );
     CheckStatsNode ( stats, 1,      0,      Node::COMPILER_NODE );
     CheckStatsNode ( stats, 3,      0,      Node::OBJECT_NODE );
     CheckStatsNode ( stats, 1,      0,      Node::LIBRARY_NODE );
     CheckStatsNode ( stats, 1,      1,      Node::ALIAS_NODE );
-    CheckStatsTotal( stats, 8+numF, 3+numF );
+    CheckStatsTotal( stats, 11+numF, 6+numF );
 }
 
 // TestGenerateFromExplicitList

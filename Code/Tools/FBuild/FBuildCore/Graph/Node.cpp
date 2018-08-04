@@ -161,7 +161,31 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
         return true;
     }
 
-    if ( IsAFile() )
+	if( IsAFile() && GetType() == Type::OBJECT_NODE )
+	{
+		ObjectNode* node = CastTo<ObjectNode>();
+		for( const Dependency& outputFile : node->GetOutputFiles() )
+		{
+			uint64_t lastWriteTime = FileIO::GetFileLastWriteTime( outputFile.GetNode()->GetName() );
+
+			if( lastWriteTime == 0 )
+			{
+				// file is missing on disk
+				FLOG_INFO( "Need to build '%s' (missing)", GetName().Get() );
+				return true;
+			}
+
+			if( lastWriteTime != m_Stamp )
+			{
+				// on disk file doesn't match our file
+				// (modified by some external process)
+				FLOG_INFO( "Need to build '%s' (externally modified - stamp = %" PRIu64 ", disk = %" PRIu64 ")", GetName().Get(), m_Stamp, lastWriteTime );
+				return true;
+			}
+		}
+	}
+
+    if ( IsAFile() && GetType() != Type::OBJECT_NODE )
     {
         uint64_t lastWriteTime = FileIO::GetFileLastWriteTime( m_Name );
 
@@ -235,6 +259,9 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
 
         // we're about to compare stamps, so we should be a file (or a file list)
         ASSERT( n->IsAFile() || ( n->GetType() == Node::OBJECT_LIST_NODE ) );
+		
+		// Object nodes should never be dependencies. Only their output files should be depended on.
+		ASSERT( n->GetType() != Node::OBJECT_NODE );
 
         // Weak dependencies don't cause rebuilds
         if ( it->IsWeak() )
@@ -368,22 +395,31 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
     // Create node
     Node * n = CreateNode( nodeGraph, (Type)nodeType, name );
 
-    // Early out for FileNode
-    if ( nodeType == Node::FILE_NODE )
-    {
-        return n;
-    }
+	ASSERT( n->m_PreBuildDependencies.IsEmpty() );
+	ASSERT( n->m_StaticDependencies.IsEmpty() );
+	ASSERT( n->m_DynamicDependencies.IsEmpty() );
 
-    // Deserialize properties
-    if ( n->Deserialize( nodeGraph, stream ) == false )
-    {
-        return nullptr;
-    }
+	// Deps
+	if( (n->m_PreBuildDependencies.Load( nodeGraph, stream ) == false) ||
+		(n->m_StaticDependencies.Load( nodeGraph, stream ) == false) ||
+		(n->m_DynamicDependencies.Load( nodeGraph, stream ) == false) )
+	{
+		return nullptr;
+	}
+
+	if( nodeType != Node::FILE_NODE )
+	{
+		// Deserialize properties
+		if( n->Deserialize( nodeGraph, stream ) == false )
+		{
+			return nullptr;
+		}
+
+		// set stamp
+		n->m_Stamp = stamp;
+	}
 
     n->PostLoad( nodeGraph ); // TODO:C Eliminate the need for this
-
-    // set stamp
-    n->m_Stamp = stamp;
     return n;
 }
 
@@ -417,15 +453,15 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
         node->MarkAsSaved();
     #endif
 
-    if ( nodeType == Node::FILE_NODE )
-    {
-        return;
-    }
-
     // Deps
     node->m_PreBuildDependencies.Save( stream );
     node->m_StaticDependencies.Save( stream );
     node->m_DynamicDependencies.Save( stream );
+
+	if( nodeType == Node::FILE_NODE )
+	{
+		return;
+	}
 
     // Properties
     const ReflectionInfo * const ri = node->GetReflectionInfoV();
@@ -585,20 +621,8 @@ bool Node::DetermineNeedToBuild( bool forceClean ) const
 
 // Deserialize
 //------------------------------------------------------------------------------
-bool Node::Deserialize( NodeGraph & nodeGraph, IOStream & stream )
+bool Node::Deserialize( NodeGraph & /*nodeGraph*/, IOStream & stream )
 {
-    ASSERT( m_PreBuildDependencies.IsEmpty() );
-    ASSERT( m_StaticDependencies.IsEmpty() );
-    ASSERT( m_DynamicDependencies.IsEmpty() );
-
-    // Deps
-    if ( ( m_PreBuildDependencies.Load( nodeGraph, stream ) == false ) ||
-         ( m_StaticDependencies.Load( nodeGraph, stream ) == false ) ||
-         ( m_DynamicDependencies.Load( nodeGraph, stream ) == false ) )
-    {
-        return nullptr;
-    }
-
     // Properties
     const ReflectionInfo * const ri = GetReflectionInfoV();
     return Deserialize( stream, this, *ri );

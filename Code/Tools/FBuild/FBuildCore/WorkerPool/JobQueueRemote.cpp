@@ -288,31 +288,36 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
     if ( job->IsLocal() == false )
     {
         // file name should be the same as on host
-        const char * fileName = ( job->GetRemoteName().FindLast( NATIVE_SLASH ) + 1 );
-
-        AStackString<> tmpFileName;
-        WorkerThread::CreateTempFilePath( fileName, tmpFileName );
-        node->ReplaceDummyName( tmpFileName );
+        for( const Dependency& outputNode : node->GetOutputFiles() )
+		{
+			const char * fileName = (outputNode.GetNode()->GetName().FindLast( NATIVE_SLASH ) + 1 );
+		
+			AStackString<> tmpFileName;
+			WorkerThread::CreateTempFilePath( fileName, tmpFileName );
+			outputNode.GetNode()->ReplaceDummyName( tmpFileName );
+		}
 
         //DEBUGSPAM( "REMOTE: %s (%s)\n", fileName, job->GetRemoteName().Get() );
     }
 
-    ASSERT( node->IsAFile() );
+	for( const Dependency& outputNode : node->GetOutputFiles() )
+	{
+		// Can't call this on a NodeProxy. Make NodeProxy return true for IsAFile()?
+		//ASSERT( outputNode->IsAFile() );
 
-    // make sure the output path exists
-    if ( Node::EnsurePathExistsForFile( node->GetName() ) == false )
-    {
-        // error already output by EnsurePathExistsForFile
-        return Node::NODE_RESULT_FAILED;
-    }
+		// make sure the output path exists
+		if( Node::EnsurePathExistsForFile( outputNode.GetNode()->GetName() ) == false )
+		{
+			// error already output by EnsurePathExistsForFile
+			return Node::NODE_RESULT_FAILED;
+		}
 
-    // Delete any left over PDB from a previous run (to be sure we have a clean pdb)
-    if ( node->IsUsingPDB() && ( job->IsLocal() == false ) )
-    {
-        AStackString<> pdbName;
-        node->GetPDBName( pdbName );
-        FileIO::FileDelete( pdbName.Get() );
-    }
+		// Delete any existing temporary files to ensure they are clean
+		if( job->IsLocal() == false )
+		{
+			FileIO::FileDelete( outputNode.GetNode()->GetName().Get() );
+		}
+	}
 
     Node::BuildResult result;
     {
@@ -320,7 +325,7 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
         result = ((Node *)node )->DoBuild2( job, racingRemoteJob );
     }
 
-    // Ignore result if job was cancelled
+    // Ignore result if job was canceled
     if ( job->GetDistributionState() == Job::DIST_RACE_WON_REMOTELY_CANCEL_LOCAL )
     {
         if ( result == Node::NODE_RESULT_FAILED )
@@ -342,7 +347,7 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
             if ( job->IsLocal() )
             {
                 // record new file time for remote job we built locally
-                ASSERT( node->m_Stamp == FileIO::GetFileLastWriteTime(node->GetName()) );
+                ASSERT( node->m_Stamp == FileIO::GetFileLastWriteTime(node->GetPrimaryOutputFile()->GetName()) );
             }
         #endif
     }
@@ -352,15 +357,18 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
         node->SetStatFlag( Node::STATS_FAILED );
 
         // build of file failed - if there is a file....
-        if ( FileIO::FileExists( node->GetName().Get() ) )
-        {
-            // ... it is invalid, so try to delete it
-            if ( FileIO::FileDelete( node->GetName().Get() ) == false )
-            {
-                // failed to delete it - this might cause future build problems!
-                FLOG_ERROR( "Post failure deletion failed for '%s'", node->GetName().Get() );
-            }
-        }
+		for( const Dependency& outputNode : node->GetOutputFiles() )
+		{
+			if( FileIO::FileExists( outputNode.GetNode()->GetName().Get() ) )
+			{
+				// ... it is invalid, so try to delete it
+				if( FileIO::FileDelete( outputNode.GetNode()->GetName().Get() ) == false )
+				{
+					// failed to delete it - this might cause future build problems!
+					FLOG_ERROR( "Post failure deletion failed for '%s'", outputNode.GetNode()->GetName().Get() );
+				}
+			}
+		}
     }
     else
     {
@@ -381,16 +389,11 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
     // if compiling to a tmp file, do cleanup
     if ( job->IsLocal() == false )
     {
-        // Cleanup obj file
-        FileIO::FileDelete( node->GetName().Get() );
-
-        // Cleanup PDB file
-        if ( node->IsUsingPDB() )
-        {
-            AStackString<> pdbName;
-            node->GetPDBName( pdbName );
-            FileIO::FileDelete( pdbName.Get() );
-        }
+		// Cleanup output files
+		for( const Dependency& outputNode : node->GetOutputFiles() )
+		{
+			FileIO::FileDelete( outputNode.GetNode()->GetName().Get() );
+		}
     }
 
     // log processing time
@@ -403,7 +406,7 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
 
         FLOG_MONITOR( "FINISH_JOB %s local \"%s\" \"%s\"\n",
                       ( result == Node::NODE_RESULT_FAILED ) ? "ERROR" : "SUCCESS",
-                      job->GetNode()->GetName().Get(),
+                      node->GetPrimaryOutputFile()->GetName().Get(),
                       msgBuffer.Get());
     }
 
@@ -415,70 +418,58 @@ void JobQueueRemote::FinishedProcessingJob( Job * job, bool success )
 /*static*/ bool JobQueueRemote::ReadResults( Job * job )
 {
     const ObjectNode * node = job->GetNode()->CastTo< ObjectNode >();
-    const bool includePDB = (  node->IsUsingPDB() && ( job->IsLocal() == false ) );
+    
+	size_t numFiles = node->GetOutputFiles().GetSize();
+	Array<FileStream> fileHandles(numFiles, false);
+	Array<uint32_t> fileSizes(numFiles, false);
+	const Dependencies& fileNodes = node->GetOutputFiles();
+	fileHandles.SetSize( numFiles );
 
-    // main object
-    FileStream fs;
-    if ( fs.Open( node->GetName().Get() ) == false )
-    {
-        job->Error( "File missing despite success: '%s'", node->GetName().Get() );
-        FLOG_ERROR( "File missing despite success: '%s'", node->GetName().Get() );
-        return false;
-    }
-    uint32_t size = (uint32_t)fs.GetFileSize();
-    uint32_t size2 = 0;
+	// Open all of the files, leaving their file handles open, and get their sizes
+	size_t summedFileSize = 0;
+	{
+		FileStream* curFS = fileHandles.Begin();
+		uint32_t* curSize = fileSizes.Begin();
+		Dependency* curNode = fileNodes.Begin();
+		for( ; curFS != fileHandles.End(); ++curFS, ++curSize, ++curNode )
+		{
+			if( curFS->Open( curNode->GetNode()->GetName().Get() ) == false )
+			{
+				job->Error( "File missing despite success: '%s'", curNode->GetNode()->GetName().Get() );
+				FLOG_ERROR( "File missing despite success: '%s'", curNode->GetNode()->GetName().Get() );
+				return false;
+			}
+			const uint32_t fileSize = (uint32_t)curFS->GetFileSize();
+			*curSize = fileSize;
+			summedFileSize += fileSize;
+		}
+	}
 
-    // pdb file if present
-    FileStream fs2;
-    AStackString<> pdbName;
-    if ( includePDB )
-    {
-        node->GetPDBName( pdbName );
-        if ( fs2.Open( pdbName.Get() ) == false )
-        {
-            job->Error( "File missing despite success: '%s'", pdbName.Get() );
-            FLOG_ERROR( "File missing despite success: '%s'", pdbName.Get() );
-            return false;
-        }
-        size2 = (uint32_t)fs2.GetFileSize();
-    }
-
-    // calc memory required
-    size_t memSize = sizeof( uint32_t ); // write size of first file
-    memSize += size;
-    if ( includePDB )
-    {
-        memSize += sizeof( uint32_t ); // write size of second file
-        memSize += size2;
-    }
-
+	// calc memory required
+	size_t memSize = sizeof( uint32_t ) * numFiles + summedFileSize;
+    
     // allocate entire buffer
     AutoPtr< char > mem( (char *)ALLOC( memSize ) );
 
-    // write first file size
-    *( (uint32_t *)mem.Get() ) = size;
-
-    // read first file
-    if ( fs.Read( mem.Get() + sizeof( uint32_t ), size ) != size )
-    {
-        job->Error( "File read error for '%s'", node->GetName().Get() );
-        FLOG_ERROR( "File read error for '%s'", node->GetName().Get() );
-        return false;
-    }
-
-    if ( includePDB )
-    {
-        // write second file size
-        *( (uint32_t *)( mem.Get() + sizeof( uint32_t ) + size ) ) = size2;
-
-        // read second file
-        if ( fs2.Read( mem.Get() + sizeof( uint32_t ) + size + sizeof( uint32_t ), size2 ) != size2 )
-        {
-            job->Error( "File read error for '%s'", pdbName.Get() );
-            FLOG_ERROR( "File read error for '%s'", pdbName.Get() );
-            return false;
-        }
-    }
+    // write each file into the buffer
+	{
+		char* curMem = mem.Get();
+		FileStream* curFS = fileHandles.Begin();
+		uint32_t* curSize = fileSizes.Begin();
+		Dependency* curNode = fileNodes.Begin();
+		for( ; curFS != fileHandles.End(); ++curFS, ++curSize, ++curNode )
+		{
+			*((uint32_t *)curMem) = *curSize;
+			curMem += sizeof( uint32_t );
+			if( curFS->Read( curMem, *curSize ) != *curSize )
+			{
+				job->Error( "File read error for '%s'", curNode->GetNode()->GetName().Get() );
+				FLOG_ERROR( "File read error for '%s'", curNode->GetNode()->GetName().Get() );
+				return false;
+			}
+			curMem += *curSize;
+		}
+	}
 
     // transfer data to job
     job->OwnData( mem.Release(), memSize );

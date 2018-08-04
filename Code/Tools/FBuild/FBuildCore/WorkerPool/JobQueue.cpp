@@ -666,17 +666,32 @@ void JobQueue::FinishedProcessingJob( Job * job, bool success, bool wasARemoteJo
         FLOG_MONITOR( "START_JOB local \"%s\" \n", nodeName.Get() );
     }
 
-    // make sure the output path exists for files
-    // (but don't bother for input files)
-    const bool isOutputFile = node->IsAFile() && ( node->GetType() != Node::FILE_NODE );
-    if ( isOutputFile )
-    {
-        if ( Node::EnsurePathExistsForFile( node->GetName() ) == false )
-        {
-            // error already output by EnsurePathExistsForFile
-            return Node::NODE_RESULT_FAILED;
-        }
-    }
+	// Get a list of output files as an array
+    Dependencies singleOutputFile;
+	const Dependencies* outputFiles = &singleOutputFile;
+	if( node->IsAFile() )
+	{
+		if( node->GetType() == Node::OBJECT_NODE )
+		{
+			outputFiles = &((ObjectNode*)node)->GetOutputFiles();
+		}
+		else if( node->GetType() != Node::FILE_NODE )
+		{
+			singleOutputFile.SetCapacity( 1 );
+			singleOutputFile.Append( Dependency( node ) );
+		}
+	}
+
+	// make sure the output path exists for output files
+	for( const Dependency& outputFileNode : *outputFiles )
+	{
+		if( Node::EnsurePathExistsForFile( outputFileNode.GetNode()->GetName() ) == false )
+		{
+			// error already output by EnsurePathExistsForFile
+			return Node::NODE_RESULT_FAILED;
+		}
+	}
+	
 
     Node::BuildResult result = Node::NODE_RESULT_FAILED;
     if ( FBuild::Get().GetOptions().m_FastCancel && FBuild::GetStopBuild() )
@@ -722,22 +737,25 @@ void JobQueue::FinishedProcessingJob( Job * job, bool success, bool wasARemoteJo
     {
         if ( result == Node::NODE_RESULT_FAILED )
         {
-            if ( !isOutputFile || ( node->GetControlFlags() & Node::FLAG_NO_DELETE_ON_FAIL ) )
+            if ( node->GetControlFlags() & Node::FLAG_NO_DELETE_ON_FAIL )
             {
                 // node failed, but builder wants result left on disc
             }
             else
             {
-                // build of file failed - if there is a file....
-                if ( FileIO::FileExists( node->GetName().Get() ) )
-                {
-                    // ... it is invalid, so try to delete it
-                    if ( FileIO::FileDelete( node->GetName().Get() ) == false )
-                    {
-                        // failed to delete it - this might cause future build problems!
-                        FLOG_ERROR( "Post failure deletion failed for '%s'", node->GetName().Get() );
-                    }
-                }
+                // build of file failed - if there is an output file....
+				for( const Dependency& outputFileNode : *outputFiles )
+				{
+					if( FileIO::FileExists( outputFileNode.GetNode()->GetName().Get() ) )
+					{
+						// ... it is invalid, so try to delete it
+						if( FileIO::FileDelete( outputFileNode.GetNode()->GetName().Get() ) == false )
+						{
+							// failed to delete it - this might cause future build problems!
+							FLOG_ERROR( "Post failure deletion failed for '%s'", outputFileNode.GetNode()->GetName().Get() );
+						}
+					}
+				}
             }
         }
         else
@@ -745,16 +763,16 @@ void JobQueue::FinishedProcessingJob( Job * job, bool success, bool wasARemoteJo
             // build completed ok, or retrieved from cache...
             ASSERT( ( result == Node::NODE_RESULT_OK ) || ( result == Node::NODE_RESULT_OK_CACHE ) );
 
-            // (don't check existence of input files)
-            if ( node->GetType() != Node::FILE_NODE )
-            {
-                // ... ensure file exists (to detect builder logic problems)
-                if ( !FileIO::FileExists( node->GetName().Get() ) )
-                {
-                    FLOG_ERROR( "File missing despite success for '%s'", node->GetName().Get() );
-                    result = Node::NODE_RESULT_FAILED;
-                }
-            }
+            // for all output files
+			for( const Dependency& outputFileNode : *outputFiles )
+			{
+				// ... ensure file exists (to detect builder logic problems)
+				if( !FileIO::FileExists( outputFileNode.GetNode()->GetName().Get() ) )
+				{
+					FLOG_ERROR( "File missing despite success for '%s'", outputFileNode.GetNode()->GetName().Get() );
+					result = Node::NODE_RESULT_FAILED;
+				}
+			}
         }
     }
 

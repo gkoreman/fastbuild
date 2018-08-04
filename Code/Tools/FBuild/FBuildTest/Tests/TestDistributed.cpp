@@ -268,6 +268,15 @@ void TestDistributed::TestZiDebugFormat() const
     options.m_DistributionPort = TEST_PROTOCOL_PORT;
     FBuild fBuild( options );
 
+	const AStackString<> obj( "../tmp/Test/Distributed/Zi/a.obj" );
+	const AStackString<> pdb( "../tmp/Test/Distributed/Zi/a.obj.pdb" );
+	const AStackString<> fullPdb( "../tmp/Test/Distributed/Zi/RemoteZi.pdb" );
+	
+	// clean up anything left over from previous runs
+	EnsureFileDoesNotExist( obj );
+	EnsureFileDoesNotExist( pdb );
+	EnsureFileDoesNotExist( fullPdb );
+
     TEST_ASSERT( fBuild.Initialize() );
 
     // start a client to emulate the other end
@@ -275,6 +284,11 @@ void TestDistributed::TestZiDebugFormat() const
     s.Listen( TEST_PROTOCOL_PORT );
 
     TEST_ASSERT( fBuild.Build( AStackString<>( "remoteZi" ) ) );
+
+	// Make sure the .obj and .pdb files have been created and placed in their correct folders
+	EnsureFileExists( obj );
+	EnsureFileExists( pdb );
+	EnsureFileExists( fullPdb );
 }
 
 // TestZiDebugFormat_Local

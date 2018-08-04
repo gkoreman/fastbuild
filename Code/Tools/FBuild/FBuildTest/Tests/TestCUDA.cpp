@@ -58,11 +58,11 @@ void TestCUDA::Build() const
 
         // Check stats
         //               Seen,  Built,  Type
-        CheckStatsNode ( 65,    1,      Node::FILE_NODE ); // many included files
+        CheckStatsNode ( 66,    2,      Node::FILE_NODE ); // many included files
         CheckStatsNode ( 1,     1,      Node::COMPILER_NODE );
         CheckStatsNode ( 1,     1,      Node::OBJECT_NODE );
         CheckStatsNode ( 1,     1,      Node::OBJECT_LIST_NODE );
-        CheckStatsTotal( 68,    4 );
+        CheckStatsTotal( 69,    5 );
 
         // Test cache was stored to
         const FBuildStats::Stats & objStats = fBuild.GetStats().GetStatsFor( Node::OBJECT_NODE );
@@ -91,11 +91,11 @@ void TestCUDA::Build_NoRebuild() const
 
         // Check stats
         //               Seen,  Built,  Type
-        CheckStatsNode ( 65,    65,     Node::FILE_NODE ); // many included files
+        CheckStatsNode ( 66,    66,     Node::FILE_NODE ); // many included files
         CheckStatsNode ( 1,     0,      Node::COMPILER_NODE );
         CheckStatsNode ( 1,     0,      Node::OBJECT_NODE );
         CheckStatsNode ( 1,     0,      Node::OBJECT_LIST_NODE );
-        CheckStatsTotal( 68,    65 );
+        CheckStatsTotal( 69,    66 );
     #endif
 }
 
@@ -124,11 +124,11 @@ void TestCUDA::Build_CacheHit() const
 
         // Check stats
         //               Seen,  Built,  Type
-        CheckStatsNode ( 65,    65,     Node::FILE_NODE ); // many included files
+        CheckStatsNode ( 66,    66,     Node::FILE_NODE ); // many included files
         CheckStatsNode ( 1,     0,      Node::COMPILER_NODE );
         CheckStatsNode ( 1,     0,      Node::OBJECT_NODE );
         CheckStatsNode ( 1,     1,      Node::OBJECT_LIST_NODE );
-        CheckStatsTotal( 68,    66 );
+        CheckStatsTotal( 69,    67 );
 
         // Test we got a cache hit
         const FBuildStats::Stats & objStats = fBuild.GetStats().GetStatsFor( Node::OBJECT_NODE );
